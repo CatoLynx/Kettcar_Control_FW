@@ -167,6 +167,13 @@ enum kart_turn_indicator_substate {
   TI_INACTIVE
 };
 
+typedef struct {
+  uint16_t start;
+  int16_t steer;
+  int16_t speed;
+  uint16_t checksum;
+} kart_serial_command_t;
+
 
 void kart_init();
 void kart_updateInputs();
@@ -175,6 +182,8 @@ uint8_t kart_getInput(uint8_t pos);
 uint8_t kart_inputChanged(uint8_t pos);
 void kart_setOutput(uint8_t pos, uint8_t state);
 void kart_updateWS2812();
+void kart_sendSetpointFront(int16_t steer, int16_t speed);
+void kart_sendSetpointRear(int16_t steer, int16_t speed);
 void kart_setHorn(uint8_t state);
 void kart_startup();
 void kart_shutdown();

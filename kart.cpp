@@ -23,6 +23,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 Adafruit_NeoPixel kart_ws2812(WS2812_NUM_LEDS, PIN_WS2812_DATA, NEO_GRB + NEO_KHZ800);
 SoftwareSerial kart_swuartFront(PIN_SWUART_F_RX, PIN_SWUART_F_TX);
 SoftwareSerial kart_swuartRear(PIN_SWUART_R_RX, PIN_SWUART_R_TX);
+kart_serial_command_t kart_commandFront;
+kart_serial_command_t kart_commandRear;
 
 kart_input_t kart_inputs[NUM_INPUTS] = { { 0, 0, 0, 0, 0, 0 } };
 kart_output_t kart_outputs[NUM_OUTPUTS] = { { 0 } };
@@ -225,6 +227,21 @@ void kart_updateWS2812() {
 
   kart_ws2812.show();
 }
+
+void kart_sendSetpointFront(int16_t speed) {
+  kart_commandFront.start = 0xABCD;
+  kart_commandFront.steer = 0;
+  kart_commandFront.speed = speed;
+  kart_commandFront.checksum = (uint16_t)(kart_commandFront.start ^ kart_commandFront.steer ^ kart_commandFront.speed);
+  kart_swuartFront.write((uint8_t*)&kart_commandFront, sizeof(kart_commandFront));
+}
+
+void kart_sendSetpointRear(int16_t speed) {
+  kart_commandRear.start = 0xABCD;
+  kart_commandRear.steer = 0;
+  kart_commandRear.speed = speed;
+  kart_commandRear.checksum = (uint16_t)(kart_commandRear.start ^ kart_commandRear.steer ^ kart_commandRear.speed);
+  kart_swuartRear.write((uint8_t*)&kart_commandRear, sizeof(kart_commandRear));
 }
 
 void kart_setHorn(uint8_t state) {
@@ -751,4 +768,8 @@ void kart_operation_loop() {
   if (kart_inputChanged(INPUT_POS_INDICATOR_LEFT) || kart_inputChanged(INPUT_POS_INDICATOR_RIGHT)) {
     kart_processTurnIndicatorSwitch();
   }
+
+  // Send setpoints
+  kart_sendSetpointFront(0);
+  kart_sendSetpointRear(0);
 }
