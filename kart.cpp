@@ -17,20 +17,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "kart.h"
 #include <Adafruit_NeoPixel.h>
+#include <SoftwareSerial.h>
 
 
-kart_input_t kartInputs[NUM_INPUTS] = { { 0, 0, 0, 0, 0, 0 } };
-kart_output_t kartOutputs[NUM_OUTPUTS] = { { 0 } };
-Adafruit_NeoPixel ws2812(WS2812_NUM_LEDS, PIN_WS2812_DATA, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel kart_ws2812(WS2812_NUM_LEDS, PIN_WS2812_DATA, NEO_GRB + NEO_KHZ800);
+SoftwareSerial kart_swuartFront(PIN_SWUART_F_RX, PIN_SWUART_F_TX);
+SoftwareSerial kart_swuartRear(PIN_SWUART_R_RX, PIN_SWUART_R_TX);
 
-// State of the kart
+kart_input_t kart_inputs[NUM_INPUTS] = { { 0, 0, 0, 0, 0, 0 } };
+kart_output_t kart_outputs[NUM_OUTPUTS] = { { 0 } };
+
 kart_state_t kart_state = STATE_SHUTDOWN;
-kart_stateMachine_t kart_smStartup = { ST_START, 0, 0 };
-kart_stateMachine_t kart_smShutdown = { SD_START, 0, 0 };
-kart_stateMachine_t kart_smTurnIndicator = { TI_INACTIVE, 0, 0 };
 kart_headlights_t kart_headlights = HL_OFF;
 kart_direction_t kart_direction = DIR_FORWARD;
 kart_turn_indicator_t kart_turnIndicator = TURN_OFF;
+kart_stateMachine_t kart_smStartup = { ST_START, 0, 0 };
+kart_stateMachine_t kart_smShutdown = { SD_START, 0, 0 };
+kart_stateMachine_t kart_smTurnIndicator = { TI_INACTIVE, 0, 0 };
 
 
 void kart_init() {
@@ -69,7 +72,10 @@ void kart_init() {
   pinMode(PIN_ANALOG_THROTTLE, INPUT);
   pinMode(PIN_ANALOG_BRAKE, INPUT);
 
-  ws2812.begin();
+  kart_ws2812.begin();
+
+  kart_swuartFront.begin(115200);
+  kart_swuartRear.begin(115200);
 }
 
 void kart_updateInputs() {
@@ -85,21 +91,21 @@ void kart_updateInputs() {
       uint8_t listIndex = i * 8 + j;
 
       // Reset Changed flag in any case since it's only set for one cycle
-      kartInputs[listIndex].changed = 0;
+      kart_inputs[listIndex].changed = 0;
 
       // Always set internal / raw state flags
-      if (bit != kartInputs[listIndex].internalPrevState) {
-        kartInputs[listIndex].internalLastChange = now;
+      if (bit != kart_inputs[listIndex].internalPrevState) {
+        kart_inputs[listIndex].internalLastChange = now;
       }
-      kartInputs[listIndex].internalPrevState = kartInputs[listIndex].internalState;
-      kartInputs[listIndex].internalState = bit;
+      kart_inputs[listIndex].internalPrevState = kart_inputs[listIndex].internalState;
+      kart_inputs[listIndex].internalState = bit;
 
       // If debounce deadtime passed without any further change, carry over the internal values
-      if (now - kartInputs[listIndex].internalLastChange > INPUT_DEBOUNCE_TIME_MS) {
-        if (bit != kartInputs[listIndex].state) {
-          kartInputs[listIndex].changed = 1;
-          kartInputs[listIndex].prevState = kartInputs[listIndex].state;
-          kartInputs[listIndex].state = bit;
+      if (now - kart_inputs[listIndex].internalLastChange > INPUT_DEBOUNCE_TIME_MS) {
+        if (bit != kart_inputs[listIndex].state) {
+          kart_inputs[listIndex].changed = 1;
+          kart_inputs[listIndex].prevState = kart_inputs[listIndex].state;
+          kart_inputs[listIndex].state = bit;
         }
       }
 
@@ -116,7 +122,7 @@ void kart_updateOutputs() {
     uint8_t byte = 0x00;
     for (uint8_t j = 0; j < 8; j++) {
       uint8_t listIndex = i * 8 + j;
-      if (kartOutputs[listIndex].state) {
+      if (kart_outputs[listIndex].state) {
         byte |= 1 << (7 - j);
       }
     }
@@ -131,21 +137,21 @@ void kart_updateOutputs() {
 
 uint8_t kart_getInput(uint8_t pos) {
   if (pos >= NUM_INPUTS) return 0;
-  return kartInputs[pos].state;
+  return kart_inputs[pos].state;
 }
 
 uint8_t kart_inputChanged(uint8_t pos) {
   if (pos >= NUM_INPUTS) return 0;
-  return kartInputs[pos].changed;
+  return kart_inputs[pos].changed;
 }
 
 void kart_setOutput(uint8_t pos, uint8_t state) {
   if (pos >= NUM_OUTPUTS) return;
-  kartOutputs[pos].state = !!state;
+  kart_outputs[pos].state = !!state;
 }
 
 void kart_updateWS2812() {
-  ws2812.clear();
+  kart_ws2812.clear();
   uint32_t seg0Color = 0;
   uint32_t seg1Color = 0;
   uint32_t seg2Color = 0;
@@ -202,22 +208,23 @@ void kart_updateWS2812() {
   }
 
   for (uint8_t i = WS2812_SEG_0_START; i <= WS2812_SEG_0_END; i++) {
-    ws2812.setPixelColor(i, seg0Color);
+    kart_ws2812.setPixelColor(i, seg0Color);
   }
   for (uint8_t i = WS2812_SEG_1_START; i <= WS2812_SEG_1_END; i++) {
-    ws2812.setPixelColor(i, seg1Color);
+    kart_ws2812.setPixelColor(i, seg1Color);
   }
   for (uint8_t i = WS2812_SEG_2_START; i <= WS2812_SEG_2_END; i++) {
-    ws2812.setPixelColor(i, seg2Color);
+    kart_ws2812.setPixelColor(i, seg2Color);
   }
   for (uint8_t i = WS2812_SEG_3_START; i <= WS2812_SEG_3_END; i++) {
-    ws2812.setPixelColor(i, seg3Color);
+    kart_ws2812.setPixelColor(i, seg3Color);
   }
   for (uint8_t i = WS2812_SEG_4_START; i <= WS2812_SEG_4_END; i++) {
-    ws2812.setPixelColor(i, seg4Color);
+    kart_ws2812.setPixelColor(i, seg4Color);
   }
 
-  ws2812.show();
+  kart_ws2812.show();
+}
 }
 
 void kart_setHorn(uint8_t state) {
@@ -412,9 +419,9 @@ void kart_startup_loop() {
 
         // Set LED strip to red
         for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
-          ws2812.setPixelColor(i, ws2812.Color(255, 0, 0));
+          kart_ws2812.setPixelColor(i, kart_ws2812.Color(255, 0, 0));
         }
-        ws2812.show();
+        kart_ws2812.show();
         kart_smStartup.state = ST_ALL_ON;
         kart_smStartup.stepStartTime = now;
         break;
@@ -436,9 +443,9 @@ void kart_startup_loop() {
         if (totalTimePassed >= 666) {
           // Set LED strip to green
           for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
-            ws2812.setPixelColor(i, ws2812.Color(0, 255, 0));
+            kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 255, 0));
           }
-          ws2812.show();
+          kart_ws2812.show();
           kart_smStartup.state = ST_WS2812_GREEN;
           kart_smStartup.stepStartTime = now;
         }
@@ -450,9 +457,9 @@ void kart_startup_loop() {
         if (stepTimePassed >= 666) {
           // Set LED strip to blue
           for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
-            ws2812.setPixelColor(i, ws2812.Color(0, 0, 255));
+            kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 0, 255));
           }
-          ws2812.show();
+          kart_ws2812.show();
           kart_smStartup.state = ST_WS2812_BLUE;
           kart_smStartup.stepStartTime = now;
         }
@@ -473,9 +480,9 @@ void kart_startup_loop() {
           kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
           kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
           for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
-            ws2812.setPixelColor(i, ws2812.Color(0, 0, 0));
+            kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 0, 0));
           }
-          ws2812.show();
+          kart_ws2812.show();
 
           // Process all switches/buttons once to establish initial state
           kart_processMotorFrontEnableSwitch();
