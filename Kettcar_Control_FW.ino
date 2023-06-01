@@ -1,5 +1,5 @@
-"""
-Copyright 2020 - 2023 Julian Metzler
+/*
+Copyright 2023 Julian Metzler
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -13,7 +13,7 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
+*/
 
 #include "kart.h"
 
@@ -24,21 +24,7 @@ uint8_t global_ledState = 0;
 
 void setup() {
   Serial.begin(115200);
-
   kart_init();
-
-  /* Blinker
-  while (1) {
-    tone(PIN_BUZZER, 1500);
-    delay(5);
-    noTone(PIN_BUZZER);
-    delay(350);
-    tone(PIN_BUZZER, 1200);
-    delay(5);
-    noTone(PIN_BUZZER);
-    delay(350);
-  }
-  */
 }
 
 void loop() {

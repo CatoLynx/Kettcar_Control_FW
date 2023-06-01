@@ -1,5 +1,5 @@
-"""
-Copyright 2020 - 2023 Julian Metzler
+/*
+Copyright 2023 Julian Metzler
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -13,7 +13,7 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
+*/
 
 #include <Arduino.h>
 
@@ -48,6 +48,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define INPUT_DEBOUNCE_TIME_MS 20
 
 #define WS2812_NUM_LEDS 56
+#define WS2812_SEG_0_START 0
+#define WS2812_SEG_0_END 12
+#define WS2812_SEG_1_START 13
+#define WS2812_SEG_1_END 22
+#define WS2812_SEG_2_START 23
+#define WS2812_SEG_2_END 32
+#define WS2812_SEG_3_START 33
+#define WS2812_SEG_3_END 42
+#define WS2812_SEG_4_START 43
+#define WS2812_SEG_4_END 55
+#define WS2812_COLOR_LIGHT 0x400000
+#define WS2812_COLOR_BRAKE 0xFF0000
+#define WS2812_COLOR_INDICATOR 0xFF4000
+#define WS2812_COLOR_REVERSE 0xFFFFFF
 
 
 #define INPUT_POS_MOTOR_REAR_ENABLE 11
@@ -93,18 +107,64 @@ typedef struct {
   uint8_t state;
 } kart_output_t;
 
+typedef struct {
+  uint8_t state;
+  uint64_t startTime;
+  uint64_t stepStartTime;
+} kart_stateMachine_t;
+
 typedef enum {
   STATE_SHUTDOWN,
-  STATE_SELFTEST_DELAY,
-  STATE_OPERATIONAL
+  STATE_STARTING_UP,
+  STATE_OPERATIONAL,
+  STATE_SHUTTING_DOWN
 } kart_state_t;
 
-enum kart_selftest_substate {
+typedef enum {
+  HL_OFF,
+  HL_DRL,
+  HL_LOW,
+  HL_HIGH
+} kart_headlights_t;
+
+typedef enum {
+  DIR_FORWARD,
+  DIR_REVERSE
+} kart_direction_t;
+
+typedef enum {
+  TURN_OFF,
+  TURN_LEFT,
+  TURN_RIGHT,
+  TURN_HAZARD
+} kart_turn_indicator_t;
+
+enum kart_startup_substate {
   ST_START,
+  ST_ALL_ON,
   ST_BUZZER_OFF,
   ST_WS2812_GREEN,
   ST_WS2812_BLUE,
+  ST_MAINBOARD_ENABLE,
+  ST_MAINBOARD_DEADTIME,
   ST_END
+};
+
+enum kart_shutdown_substate {
+  SD_START,
+  SD_MAINBOARD_DISABLE,
+  SD_MAINBOARD_DEADTIME,
+  SD_END
+};
+
+enum kart_turn_indicator_substate {
+  TI_START,
+  TI_ON_BEEP,
+  TI_ON,
+  TI_OFF_BEEP,
+  TI_OFF,
+  TI_END,
+  TI_INACTIVE
 };
 
 
@@ -114,8 +174,21 @@ void kart_updateOutputs();
 uint8_t kart_getInput(uint8_t pos);
 uint8_t kart_inputChanged(uint8_t pos);
 void kart_setOutput(uint8_t pos, uint8_t state);
+void kart_updateWS2812();
 void kart_setHorn(uint8_t state);
 void kart_startup();
 void kart_shutdown();
+void kart_startTurnIndicator();
+void kart_stopTurnIndicator();
+void kart_processMotorFrontEnableSwitch();
+void kart_processMotorRearEnableSwitch();
+void kart_processHeadlightsSwitch();
+void kart_processHazardButton();
+void kart_processForwardReverseSwitch();
+void kart_processHornButton();
+void kart_processTurnIndicatorSwitch();
 void kart_loop();
-void kart_selftest_loop();
+void kart_startup_loop();
+void kart_shutdown_loop();
+void kart_turnIndicator_loop();
+void kart_operation_loop();
