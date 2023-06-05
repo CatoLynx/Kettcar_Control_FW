@@ -73,7 +73,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #define NUM_INPUTS 16
 #define NUM_OUTPUTS 24
-#define INPUT_DEBOUNCE_TIME_MS 20
+#define INPUT_DEBOUNCE_TIME_MS 40
 
 #define WS2812_NUM_LEDS 56
 #define WS2812_SEG_0_START 0
