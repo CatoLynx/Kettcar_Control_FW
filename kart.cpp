@@ -44,8 +44,6 @@ static int16_t kart_throttleInput = 0;
 static int16_t kart_brakeInput = 0;
 static int16_t kart_prevThrottleInput = 0;
 static int16_t kart_prevBrakeInput = 0;
-static int16_t kart_throttleOutput = 0;
-static int16_t kart_prevThrottleOutput = 0;
 static int16_t kart_setpointFront = 0;
 static int16_t kart_setpointRear = 0;
 
@@ -498,7 +496,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     selectMotorForUART(MOT_FRONT);
     // Flush buffer, might contain stale data from other mainboard
     while (Serial.available()) Serial.read();
-    return kart_readFeedback(&kart_feedbackRear);
+    return kart_readFeedback(&kart_feedbackFront);
 #endif
   }
 
@@ -1252,54 +1250,82 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     Serial.println(kart_brakeInput);
 #endif
 
-    int16_t processedThrottleInput = kart_throttleInput;
-    int16_t processedBrakeInput = kart_brakeInput;
+    int16_t processedThrottleInputFront = kart_throttleInput;
+    int16_t processedBrakeInputFront = kart_brakeInput;
+    int16_t throttleOutputFront = 0;
+    int16_t processedBrakeInputRear = kart_brakeInput;
+    int16_t processedThrottleInputRear = kart_throttleInput;
+    int16_t throttleOutputRear = 0;
 
-    // Calculate speed average
-    int16_t speedAvg = (kart_feedbackFront.speedL_meas - kart_feedbackFront.speedR_meas + kart_feedbackRear.speedL_meas - kart_feedbackRear.speedR_meas) / 4;
+    // Calculate speed average - right wheel is subtracted because it spins in the opposite direction
+    int16_t speedAvgFront = (kart_feedbackFront.speedL_meas - kart_feedbackFront.speedR_meas) / 2;
+    int16_t speedAvgRear = (kart_feedbackRear.speedL_meas - kart_feedbackRear.speedR_meas) / 2;
+    int16_t speedAvgAbsFront = speedAvgFront < 0 ? -speedAvgFront : speedAvgFront;
+    int16_t speedAvgAbsRear = speedAvgRear < 0 ? -speedAvgRear : speedAvgRear;
 
     // Calculate speedBlend: 0...1 maps to 10...60 rpm
-    float speedBlend = clamp_float(map_float(speedAvg, 10.0f, 60.0f, 0.0f, 1.0f), 0.0f, 1.0f);
+    float speedBlendFront = clamp_float(map_float(speedAvgAbsFront, 10.0f, 60.0f, 0.0f, 1.0f), 0.0f, 1.0f);
+    float speedBlendRear = clamp_float(map_float(speedAvgAbsRear, 10.0f, 60.0f, 0.0f, 1.0f), 0.0f, 1.0f);
 
     // At small speeds, fade out throttle if brake is pressed
-    if (processedBrakeInput > 30) {
-      processedThrottleInput *= speedBlend;
+    if (processedBrakeInputFront > 30) {
+      processedThrottleInputFront *= speedBlendFront;
+    }
+    if (processedBrakeInputRear > 30) {
+      processedThrottleInputRear *= speedBlendRear;
     }
 
     // Make sure brake always works against the current direction
-    if (speedAvg > 0) {
+    if (speedAvgFront > 0) {
       // Moving forward
-      processedBrakeInput = -processedBrakeInput * speedBlend;
+      processedBrakeInputFront = -processedBrakeInputFront * speedBlendFront;
     } else {
       // Moving backward
-      processedBrakeInput = processedBrakeInput * speedBlend;
+      processedBrakeInputFront = processedBrakeInputFront * speedBlendFront;
+    }
+    if (speedAvgRear > 0) {
+      // Moving forward
+      processedBrakeInputRear = -processedBrakeInputRear * speedBlendRear;
+    } else {
+      // Moving backward
+      processedBrakeInputRear = processedBrakeInputRear * speedBlendRear;
     }
 
     // Handle forward / reverse
     if (kart_direction == DIR_REVERSE) {
-      kart_throttleOutput = processedBrakeInput - processedThrottleInput;
+      throttleOutputFront = processedBrakeInputFront - processedThrottleInputFront;
+      throttleOutputRear = processedBrakeInputRear - processedThrottleInputRear;
     } else {
-      kart_throttleOutput = processedBrakeInput + processedThrottleInput;
+      throttleOutputFront = processedBrakeInputFront + processedThrottleInputFront;
+      throttleOutputRear = processedBrakeInputRear + processedThrottleInputRear;
     }
 
     // Set setpoints
-    if ((kart_throttleOutput > 0) != (speedAvg > 0) /* if signs differ */) {
-      // When braking, always send to both boards
-      kart_setpointFront = kart_throttleOutput;
-      kart_setpointRear = kart_throttleOutput;
+    if (((throttleOutputFront > 0) != (speedAvgFront > 0) /* if signs differ */) && (speedAvgFront > 60)) {
+      // When braking at a reasonably high speed, always send to both boards
+      kart_setpointFront = throttleOutputFront;
     } else {
       // Otherwise, only send to enabled boards
-      kart_setpointFront = kart_motorFrontEnabled ? kart_throttleOutput : 0;
-      kart_setpointRear = kart_motorRearEnabled ? kart_throttleOutput : 0;
+      kart_setpointFront = kart_motorFrontEnabled ? throttleOutputFront : 0;
+    }
+    if (((throttleOutputRear > 0) != (speedAvgRear > 0) /* if signs differ */) && (speedAvgRear > 60)) {
+      // When braking at a reasonably high speed, always send to both boards
+      kart_setpointRear = throttleOutputRear;
+    } else {
+      // Otherwise, only send to enabled boards
+      kart_setpointRear = kart_motorRearEnabled ? throttleOutputRear : 0;
     }
 
     // If a board has an error, always set setpoint to 0
-    if (feedbackErrorFront) kart_setpointFront = 0;
-    if (feedbackErrorRear) kart_setpointRear = 0;
+    // Probably not sensible
+    //if (feedbackErrorFront) kart_setpointFront = 0;
+    //if (feedbackErrorRear) kart_setpointRear = 0;
 
 #ifdef SERIAL_DEBUG
-    Serial.print("Throttle Out: ");
-    Serial.println(kart_throttleOutput);
+    Serial.print("Setpoint Front: ");
+    Serial.println(kart_setpointFront);
+    Serial.print("Setpoint Rear:  ");
+    Serial.println(kart_setpointRear);
 #endif
 
     // Send setpoints
