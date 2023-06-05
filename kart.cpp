@@ -55,6 +55,7 @@ static kart_stateMachine_t kart_smAdcCalibration = { AC_START, 0, 0 };
 static kart_stateMachine_t kart_smStartup = { ST_START, 0, 0 };
 static kart_stateMachine_t kart_smShutdown = { SD_START, 0, 0 };
 static kart_stateMachine_t kart_smTurnIndicator = { TI_INACTIVE, 0, 0 };
+static kart_stateMachine_t kart_smReverseBeep = { RB_INACTIVE, 0, 0 };
 
 
 void kart_init() {
@@ -447,6 +448,17 @@ void kart_stopTurnIndicator() {
   kart_smTurnIndicator.stepStartTime = millis();
 }
 
+void kart_startReverseBeep() {
+  kart_smReverseBeep.state = RB_START;
+  kart_smReverseBeep.startTime = millis();
+  kart_smReverseBeep.stepStartTime = kart_smReverseBeep.startTime;
+}
+
+void kart_stopReverseBeep() {
+  kart_smReverseBeep.state = RB_END;
+  kart_smReverseBeep.stepStartTime = millis();
+}
+
 void kart_processMotorFrontEnableSwitch() {
   kart_motorFrontEnabled = kart_getInput(INPUT_POS_MOTOR_FRONT_ENABLE);
 }
@@ -514,8 +526,10 @@ void kart_processHazardButton() {
 void kart_processForwardReverseSwitch() {
   if (!kart_getInput(INPUT_POS_FORWARD)) {
     kart_direction = DIR_REVERSE;
+    kart_startReverseBeep();
   } else {
     kart_direction = DIR_FORWARD;
+    kart_stopReverseBeep();
   }
   kart_updateWS2812();
 }
@@ -587,6 +601,7 @@ void kart_loop() {
       {
         kart_operation_loop();
         kart_turnIndicator_loop();
+        kart_reverseBeep_loop();
 
         // Check for ignition off
         if (!kart_getInput(INPUT_POS_IGNITION)) {
@@ -1024,6 +1039,53 @@ void kart_turnIndicator_loop() {
       }
 
     case TI_INACTIVE:
+      {
+        // Nothing to do
+        break;
+      }
+  }
+}
+
+void kart_reverseBeep_loop() {
+  uint64_t now = millis();
+  uint64_t totalTimePassed = now - kart_smReverseBeep.startTime;
+  uint64_t stepTimePassed = now - kart_smReverseBeep.stepStartTime;
+
+  switch (kart_smReverseBeep.state) {
+    case RB_START:
+    case RB_PAUSE:
+      {
+        // If RB_START, no delay is needed to ensure that we beep right away
+        if (kart_smReverseBeep.state == RB_START || stepTimePassed >= 500) {
+          // Start beep
+          tone(PIN_BUZZER, 2000);
+          kart_smReverseBeep.state = RB_BEEP;
+          kart_smReverseBeep.stepStartTime = now;
+        }
+        break;
+      }
+
+    case RB_BEEP:
+      {
+        if (stepTimePassed >= 500) {
+          // Stop beep
+          noTone(PIN_BUZZER);
+          kart_smTurnIndicator.state = RB_PAUSE;
+          kart_smTurnIndicator.stepStartTime = now;
+        }
+        break;
+      }
+
+    case RB_END:
+      {
+        // Stop beep
+        noTone(PIN_BUZZER);
+        kart_smReverseBeep.state = RB_INACTIVE;
+        kart_smReverseBeep.stepStartTime = now;
+        break;
+      }
+
+    case RB_INACTIVE:
       {
         // Nothing to do
         break;

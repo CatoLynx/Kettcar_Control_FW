@@ -190,6 +190,14 @@ enum kart_turn_indicator_substate {
   TI_INACTIVE
 };
 
+enum kart_reverse_beep_substate {
+  RB_START,
+  RB_BEEP,
+  RB_PAUSE,
+  RB_END,
+  RB_INACTIVE
+};
+
 typedef struct {
   uint16_t start;
   int16_t steer;
@@ -237,6 +245,8 @@ void kart_startup();
 void kart_shutdown();
 void kart_startTurnIndicator();
 void kart_stopTurnIndicator();
+void kart_startReverseBeep();
+void kart_stopReverseBeep();
 void kart_processMotorFrontEnableSwitch();
 void kart_processMotorRearEnableSwitch();
 void kart_processHeadlightsSwitch();
@@ -249,4 +259,5 @@ void kart_adc_calibration_loop();
 void kart_startup_loop();
 void kart_shutdown_loop();
 void kart_turnIndicator_loop();
+void kart_reverseBeep_loop();
 void kart_operation_loop();
