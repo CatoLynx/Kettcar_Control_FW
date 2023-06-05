@@ -17,6 +17,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "kart.h"
 #include "MedianFilter.h"
+#include "util.h"
 #include <Adafruit_NeoPixel.h>
 #include <EEPROM.h>
 
@@ -664,7 +665,8 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     kart_updateInputs();
     kart_prevThrottleInput = kart_throttleInput;
     kart_prevBrakeInput = kart_brakeInput;
-    kart_throttleInput = MEDIANFILTER_Insert(&kart_medianFilterThrottle, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minThrottle, kart_adc_calibration_values.maxThrottle, 0, THROTTLE_MAX));
+    // Limit rising throttle but allow instant falling for safety
+    kart_throttleInput = kart_adc_rate_limit(MEDIANFILTER_Insert(&kart_medianFilterThrottle, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minThrottle, kart_adc_calibration_values.maxThrottle, 0, THROTTLE_MAX)), kart_prevThrottleInput, THROTTLE_RATE_LIMIT, 10000);
     kart_brakeInput = MEDIANFILTER_Insert(&kart_medianFilterBrake, kart_prepare_adc_value(analogRead(PIN_ANALOG_BRAKE), kart_adc_calibration_values.minBrake, kart_adc_calibration_values.maxBrake, 0, BRAKE_MAX));
 
     switch (kart_state) {
@@ -1243,23 +1245,45 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     uint8_t feedbackErrorRear = kart_readFeedbackRear();
     kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, feedbackErrorRear);
 
-    // Process throttle and brake
-    // Limit throttle increase (both directions) but allow instant deceleration for safety
-    // TODO: Use feedback here!
-    kart_throttleOutput = kart_adc_rate_limit(kart_throttleInput - kart_brakeInput, kart_prevThrottleOutput, THROTTLE_RATE_LIMIT, 10000);
-    kart_prevThrottleOutput = kart_throttleOutput;
-
 #ifdef SERIAL_DEBUG
     Serial.print("Throttle In:  ");
     Serial.println(kart_throttleInput);
     Serial.print("Brake In:     ");
     Serial.println(kart_brakeInput);
-    Serial.print("Throttle Out: ");
-    Serial.println(kart_throttleOutput);
 #endif
 
+    int16_t processedThrottleInput = kart_throttleInput;
+    int16_t processedBrakeInput = kart_brakeInput;
+
+    // Calculate speed average
+    int16_t speedAvg = (kart_feedbackFront.speedL_meas - kart_feedbackFront.speedR_meas + kart_feedbackRear.speedL_meas - kart_feedbackRear.speedR_meas) / 4;
+
+    // Calculate speedBlend: 0...1 maps to 10...60 rpm
+    float speedBlend = clamp_float(map_float(speedAvg, 10.0f, 60.0f, 0.0f, 1.0f), 0.0f, 1.0f);
+
+    // At small speeds, fade out throttle if brake is pressed
+    if (processedBrakeInput > 30) {
+      processedThrottleInput *= speedBlend;
+    }
+
+    // Make sure brake always works against the current direction
+    if (speedAvg > 0) {
+      // Moving forward
+      processedBrakeInput = -processedBrakeInput * speedBlend;
+    } else {
+      // Moving backward
+      processedBrakeInput = processedBrakeInput * speedBlend;
+    }
+
+    // Handle forward / reverse
+    if (kart_direction == DIR_REVERSE) {
+      kart_throttleOutput = processedBrakeInput - processedThrottleInput;
+    } else {
+      kart_throttleOutput = processedBrakeInput + processedThrottleInput;
+    }
+
     // Set setpoints
-    if (kart_throttleOutput <= 0) {
+    if ((kart_throttleOutput > 0) != (speedAvg > 0) /* if signs differ */) {
       // When braking, always send to both boards
       kart_setpointFront = kart_throttleOutput;
       kart_setpointRear = kart_throttleOutput;
@@ -1272,6 +1296,11 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     // If a board has an error, always set setpoint to 0
     if (feedbackErrorFront) kart_setpointFront = 0;
     if (feedbackErrorRear) kart_setpointRear = 0;
+
+#ifdef SERIAL_DEBUG
+    Serial.print("Throttle Out: ");
+    Serial.println(kart_throttleOutput);
+#endif
 
     // Send setpoints
     kart_sendSetpointFront(kart_setpointFront);
