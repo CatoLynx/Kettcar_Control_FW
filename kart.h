@@ -16,10 +16,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <Arduino.h>
+
+
+//#define SERIAL_DEBUG
+
+//#define MAINBOARD_SOFTWARE_SERIAL
+#define MAINBOARD_HARDWARE_SERIAL
+
+#if defined(SERIAL_DEBUG) && defined(MAINBOARD_HARDWARE_SERIAL)
+#error "SERIAL_DEBUG and MAINBOARD_HARDWARE_SERIAL can not be used simultaneously!"
+#endif
+
+#if defined(MAINBOARD_SOFTWARE_SERIAL) && defined(MAINBOARD_HARDWARE_SERIAL)
+#error "MAINBOARD_SOFTWARE_SERIAL and MAINBOARD_HARDWARE_SERIAL can not be used simultaneously!"
+#endif
+
+#ifdef MAINBOARD_SOFTWARE_SERIAL
 #include <SoftwareSerial.h>
-
-
-#define SERIAL_DEBUG
+#endif
 
 
 #define PIN_HORN 2
@@ -198,6 +212,11 @@ enum kart_reverse_beep_substate {
   RB_INACTIVE
 };
 
+enum kart_motor {
+  MOT_FRONT,
+  MOT_REAR
+};
+
 typedef struct {
   uint16_t start;
   int16_t steer;
@@ -235,9 +254,17 @@ int16_t kart_prepare_adc_value(int16_t in, int16_t minIn, int16_t maxIn, int16_t
 int16_t kart_adc_rate_limit(int16_t inVal, int16_t prevVal, int16_t maxRateInc, int16_t maxRateDec);
 void kart_updateWS2812();
 void kart_turnOffWS2812();
+#ifdef MAINBOARD_HARDWARE_SERIAL
+void selectMotorForUART(uint8_t motor);
+#endif
 void kart_sendSetpointFront(int16_t steer, int16_t speed);
 void kart_sendSetpointRear(int16_t steer, int16_t speed);
+#ifdef MAINBOARD_SOFTWARE_SERIAL
 uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedbackOut);
+#endif
+#ifdef MAINBOARD_SOFTWARE_SERIAL
+uint8_t kart_readFeedback(kart_serial_feedback_t *feedbackOut);
+#endif
 uint8_t kart_readFeedbackFront();
 uint8_t kart_readFeedbackRear();
 void kart_setHorn(uint8_t state);

@@ -22,8 +22,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 static Adafruit_NeoPixel kart_ws2812(WS2812_NUM_LEDS, PIN_WS2812_DATA, NEO_GRB + NEO_KHZ800);
+
+#ifdef MAINBOARD_SOFTWARE_SERIAL
 static SoftwareSerial kart_swuartFront(PIN_SWUART_F_RX, PIN_SWUART_F_TX);
 static SoftwareSerial kart_swuartRear(PIN_SWUART_R_RX, PIN_SWUART_R_TX);
+#endif
+
 static kart_serial_command_t kart_commandFront = { 0, 0, 0, 0 };
 static kart_serial_command_t kart_commandRear = { 0, 0, 0, 0 };
 kart_serial_feedback_t kart_feedbackFront = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -124,8 +128,13 @@ void kart_init() {
 
   kart_ws2812.begin();
 
+#ifdef MAINBOARD_SOFTWARE_SERIAL
   kart_swuartFront.begin(115200);
   kart_swuartRear.begin(115200);
+#endif
+#ifdef MAINBOARD_HARDWARE_SERIAL
+  Serial.begin(115200);
+#endif
 }
 
 void kart_updateInputs() {
@@ -324,12 +333,31 @@ void kart_turnOffWS2812() {
   kart_ws2812.show();
 }
 
+#ifdef MAINBOARD_HARDWARE_SERIAL
+void selectMotorForUART(uint8_t motor) {
+  if (motor == MOT_FRONT) {
+    digitalWrite(PIN_UART_SEL, HIGH);
+  } else if (motor == MOT_REAR) {
+    digitalWrite(PIN_UART_SEL, LOW);
+  }
+}
+#endif
+
 void kart_sendSetpointFront(int16_t speed) {
   kart_commandFront.start = 0xABCD;
   kart_commandFront.steer = 0;
   kart_commandFront.speed = speed;
   kart_commandFront.checksum = (uint16_t)(kart_commandFront.start ^ kart_commandFront.steer ^ kart_commandFront.speed);
+
+#ifdef MAINBOARD_SOFTWARE_SERIAL
   kart_swuartFront.write((uint8_t *)&kart_commandFront, sizeof(kart_commandFront));
+#endif
+#ifdef MAINBOARD_HARDWARE_SERIAL
+  selectMotorForUART(MOT_FRONT);
+  delayMicroseconds(10);
+  Serial.write((uint8_t *)&kart_commandFront, sizeof(kart_commandFront));
+  delayMicroseconds(10 * 10 * 8);  // 8 bytes, 10 µs per bit, 10 bits per byte (Start+Stop)
+#endif
 
   // Enable "Active" LED if setpoint != 0
   kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, speed != 0);
@@ -340,706 +368,768 @@ void kart_sendSetpointRear(int16_t speed) {
   kart_commandRear.steer = 0;
   kart_commandRear.speed = speed;
   kart_commandRear.checksum = (uint16_t)(kart_commandRear.start ^ kart_commandRear.steer ^ kart_commandRear.speed);
+
+#ifdef MAINBOARD_SOFTWARE_SERIAL
   kart_swuartRear.write((uint8_t *)&kart_commandRear, sizeof(kart_commandRear));
+#endif
+#ifdef MAINBOARD_HARDWARE_SERIAL
+  selectMotorForUART(MOT_REAR);
+  delayMicroseconds(10);
+  Serial.write((uint8_t *)&kart_commandRear, sizeof(kart_commandRear));
+  delayMicroseconds(10 * 10 * 8);  // 8 bytes, 10 µs per bit, 10 bits per byte (Start+Stop)
+#endif
 
   // Enable "Active" LED if setpoint != 0
   kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, speed != 0);
 }
 
-uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedbackOut) {
-  // Returns 0 on success, 1 on error
-  uint64_t startTime = millis();
-  kart_serial_feedback_t feedbackIn = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+#ifdef MAINBOARD_SOFTWARE_SERIAL
+uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedbackOut) {
+#endif
+#ifdef MAINBOARD_HARDWARE_SERIAL
+  uint8_t kart_readFeedback(kart_serial_feedback_t * feedbackOut) {
+    HardwareSerial *uart = &Serial;
+#endif
+    // Returns 0 on success, 1 on error
+    uint64_t startTime = millis();
+    kart_serial_feedback_t feedbackIn = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
-  // Wait for start value with timeout
-  uint8_t waitingForByteNo = 0;
-  while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
-    if (!(swuart->available())) continue;
-    uint8_t byte = swuart->read();
-    if (waitingForByteNo == 0) {
-      if (byte != 0xCD) continue;
-      waitingForByteNo = 1;
-    } else if (waitingForByteNo == 1) {
-      if (byte != 0xAB) continue;
-      break;
+    // Wait for start value with timeout
+    uint8_t waitingForByteNo = 0;
+    while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
+      if (!(uart->available())) continue;
+      uint8_t byte = uart->read();
+      if (waitingForByteNo == 0) {
+        if (byte != 0xCD) continue;
+        waitingForByteNo = 1;
+      } else if (waitingForByteNo == 1) {
+        if (byte != 0xAB) continue;
+        break;
+      }
+    }
+    if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) {
+#ifdef SERIAL_DEBUG
+      Serial.println("Rx timeout");
+#endif
+      return 1;
+    }
+
+    // Manually set this since we just checked it and know it's correct
+    feedbackIn.start = 0xABCD;
+#ifdef SERIAL_DEBUG
+    Serial.println("Start byte found");
+#endif
+
+    // Start value (2 bytes) found, now read the remaining bytes with timeout
+    uint8_t bytesRemaining = sizeof(kart_serial_feedback_t) - 2;
+    uint8_t *pFeedback = (uint8_t *)&feedbackIn + 2;
+    while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
+      if (!(uart->available())) continue;
+      *pFeedback = uart->read();
+      pFeedback++;
+      bytesRemaining--;
+      if (bytesRemaining == 0) break;
+    }
+    if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) {
+#ifdef SERIAL_DEBUG
+      Serial.println("Rx timeout");
+#endif
+      return 1;
+    }
+
+#ifdef SERIAL_DEBUG
+    uint8_t *rawData = (uint8_t *)&feedbackIn;
+    Serial.print("Raw feedback: ");
+    for (uint8_t i = 0; i < sizeof(kart_serial_feedback_t); i++) {
+      Serial.print(rawData[i], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+#endif
+
+    // Verify checksum
+    uint16_t checksum;
+    checksum = (uint16_t)(feedbackIn.start ^ feedbackIn.cmd1 ^ feedbackIn.cmd2 ^ feedbackIn.speedR_meas ^ feedbackIn.speedL_meas
+                          ^ feedbackIn.batVoltage ^ feedbackIn.boardTemp ^ feedbackIn.cmdLed);
+
+    // Check validity of the new data
+    if (feedbackIn.start == 0xABCD && checksum == feedbackIn.checksum) {
+      // Copy the new data
+      memcpy(feedbackOut, &feedbackIn, sizeof(kart_serial_feedback_t));
+
+      // Print data to built-in Serial
+#ifdef SERIAL_DEBUG
+      Serial.print("1: ");
+      Serial.print(feedbackOut->cmd1);
+      Serial.print(" 2: ");
+      Serial.print(feedbackOut->cmd2);
+      Serial.print(" 3: ");
+      Serial.print(feedbackOut->speedR_meas);
+      Serial.print(" 4: ");
+      Serial.print(feedbackOut->speedL_meas);
+      Serial.print(" 5: ");
+      Serial.print(feedbackOut->batVoltage);
+      Serial.print(" 6: ");
+      Serial.print(feedbackOut->boardTemp);
+      Serial.print(" 7: ");
+      Serial.println(feedbackOut->cmdLed);
+#endif
+    } else {
+#ifdef SERIAL_DEBUG
+      Serial.println("Non-valid data skipped");
+#endif
+      return 1;
+    }
+
+    return 0;
+  }
+
+  uint8_t kart_readFeedbackFront() {
+#ifdef MAINBOARD_SOFTWARE_SERIAL
+    // Enable Rx on this channel
+    kart_swuartFront.listen();
+#ifdef SERIAL_DEBUG
+    Serial.println("Front listening");
+#endif
+    return kart_readFeedback(&kart_swuartFront, &kart_feedbackFront);
+#endif
+#ifdef MAINBOARD_HARDWARE_SERIAL
+    selectMotorForUART(MOT_FRONT);
+    // Flush buffer, might contain stale data from other mainboard
+    while (Serial.available()) Serial.read();
+    return kart_readFeedback(&kart_feedbackRear);
+#endif
+  }
+
+  uint8_t kart_readFeedbackRear() {
+#ifdef MAINBOARD_SOFTWARE_SERIAL
+    // Enable Rx on this channel
+    kart_swuartRear.listen();
+#ifdef SERIAL_DEBUG
+    Serial.println("Rear listening");
+#endif
+    return kart_readFeedback(&kart_swuartRear, &kart_feedbackRear);
+#endif
+#ifdef MAINBOARD_HARDWARE_SERIAL
+    selectMotorForUART(MOT_REAR);
+    // Flush buffer, might contain stale data from other mainboard
+    while (Serial.available()) Serial.read();
+    return kart_readFeedback(&kart_feedbackRear);
+#endif
+  }
+
+  void kart_setHorn(uint8_t state) {
+    digitalWrite(PIN_HORN, !!state);
+  }
+
+  void kart_calibrate_adc() {
+    kart_smAdcCalibration.state = AC_START;
+    kart_smAdcCalibration.startTime = millis();
+    kart_smAdcCalibration.stepStartTime = kart_smAdcCalibration.startTime;
+  }
+
+  void kart_startup() {
+    kart_smStartup.state = ST_START;
+    kart_smStartup.startTime = millis();
+    kart_smStartup.stepStartTime = kart_smStartup.startTime;
+  }
+
+  void kart_shutdown() {
+    kart_smShutdown.state = SD_START;
+    kart_smShutdown.startTime = millis();
+    kart_smShutdown.stepStartTime = kart_smShutdown.startTime;
+  }
+
+  void kart_startTurnIndicator() {
+    kart_smTurnIndicator.state = TI_START;
+    kart_smTurnIndicator.startTime = millis();
+    kart_smTurnIndicator.stepStartTime = kart_smTurnIndicator.startTime;
+  }
+
+  void kart_stopTurnIndicator() {
+    kart_smTurnIndicator.state = TI_END;
+    kart_smTurnIndicator.stepStartTime = millis();
+  }
+
+  void kart_startReverseBeep() {
+    kart_smReverseBeep.state = RB_START;
+    kart_smReverseBeep.startTime = millis();
+    kart_smReverseBeep.stepStartTime = kart_smReverseBeep.startTime;
+  }
+
+  void kart_stopReverseBeep() {
+    kart_smReverseBeep.state = RB_END;
+    kart_smReverseBeep.stepStartTime = millis();
+  }
+
+  void kart_processMotorFrontEnableSwitch() {
+    kart_motorFrontEnabled = kart_getInput(INPUT_POS_MOTOR_FRONT_ENABLE);
+  }
+
+  void kart_processMotorRearEnableSwitch() {
+    kart_motorRearEnabled = kart_getInput(INPUT_POS_MOTOR_REAR_ENABLE);
+  }
+
+  void kart_processHeadlightsSwitch() {
+    if (!kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && !kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
+      // State: Off (Daytime running lights)
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 0);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 0);
+      kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 0);
+      kart_setOutput(OUTPUT_POS_IND_HORN, 0);
+      if (kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
+      kart_headlights = HL_DRL;
+    } else if (kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && !kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
+      // State: Low
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 0);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 1);
+      kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 1);
+      kart_setOutput(OUTPUT_POS_IND_HORN, 1);
+      if (kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
+      kart_headlights = HL_LOW;
+    } else if (kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
+      // State: High
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 1);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 1);
+      kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 1);
+      kart_setOutput(OUTPUT_POS_IND_HORN, 1);
+      if (kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
+      kart_headlights = HL_HIGH;
+    }
+    kart_updateWS2812();
+  }
+
+  void kart_processHazardButton() {
+    if (kart_getInput(INPUT_POS_INDICATOR_HAZARD)) {
+      if (kart_turnIndicator == TURN_HAZARD) {
+        // If hazards are on, temporarily set to OFF
+        // to enable kart_processTurnIndicatorSwitch() to execute
+        kart_stopTurnIndicator();
+        kart_turnIndicator = TURN_OFF;
+
+        // Revert to state determined by indicator switch
+        kart_processTurnIndicatorSwitch();
+
+        // Illuminate button again if necessary
+        kart_processHeadlightsSwitch();
+      } else {
+        // Else, enable hazards
+        kart_turnIndicator = TURN_HAZARD;
+        kart_startTurnIndicator();
+      }
     }
   }
-  if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) {
-#ifdef SERIAL_DEBUG
-    Serial.println("Rx timeout");
-#endif
-    return 1;
+
+  void kart_processForwardReverseSwitch() {
+    if (!kart_getInput(INPUT_POS_FORWARD)) {
+      kart_direction = DIR_REVERSE;
+      kart_startReverseBeep();
+    } else {
+      kart_direction = DIR_FORWARD;
+      kart_stopReverseBeep();
+    }
+    kart_updateWS2812();
   }
 
-  // Manually set this since we just checked it and know it's correct
-  feedbackIn.start = 0xABCD;
-#ifdef SERIAL_DEBUG
-  Serial.println("Start byte found");
-#endif
-
-  // Start value (2 bytes) found, now read the remaining bytes with timeout
-  uint8_t bytesRemaining = sizeof(kart_serial_feedback_t) - 2;
-  uint8_t *pFeedback = (uint8_t *)&feedbackIn + 2;
-  while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
-    if (!(swuart->available())) continue;
-    *pFeedback = swuart->read();
-    pFeedback++;
-    bytesRemaining--;
-    if (bytesRemaining == 0) break;
-  }
-  if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) {
-#ifdef SERIAL_DEBUG
-    Serial.println("Rx timeout");
-#endif
-    return 1;
+  void kart_processHornButton() {
+    kart_setHorn(kart_getInput(INPUT_POS_HORN));
   }
 
-#ifdef SERIAL_DEBUG
-  uint8_t *rawData = (uint8_t *)&feedbackIn;
-  Serial.print("Raw feedback: ");
-  for (uint8_t i = 0; i < sizeof(kart_serial_feedback_t); i++) {
-    Serial.print(rawData[i], HEX);
-    Serial.print(" ");
-  }
-  Serial.println();
-#endif
+  void kart_processTurnIndicatorSwitch() {
+    // Ignore switch if hazards are on
+    if (kart_turnIndicator == TURN_HAZARD) return;
 
-  // Verify checksum
-  uint16_t checksum;
-  checksum = (uint16_t)(feedbackIn.start ^ feedbackIn.cmd1 ^ feedbackIn.cmd2 ^ feedbackIn.speedR_meas ^ feedbackIn.speedL_meas
-                        ^ feedbackIn.batVoltage ^ feedbackIn.boardTemp ^ feedbackIn.cmdLed);
-
-  // Check validity of the new data
-  if (feedbackIn.start == 0xABCD && checksum == feedbackIn.checksum) {
-    // Copy the new data
-    memcpy(feedbackOut, &feedbackIn, sizeof(kart_serial_feedback_t));
-
-    // Print data to built-in Serial
-#ifdef SERIAL_DEBUG
-    Serial.print("1: ");
-    Serial.print(feedbackOut->cmd1);
-    Serial.print(" 2: ");
-    Serial.print(feedbackOut->cmd2);
-    Serial.print(" 3: ");
-    Serial.print(feedbackOut->speedR_meas);
-    Serial.print(" 4: ");
-    Serial.print(feedbackOut->speedL_meas);
-    Serial.print(" 5: ");
-    Serial.print(feedbackOut->batVoltage);
-    Serial.print(" 6: ");
-    Serial.print(feedbackOut->boardTemp);
-    Serial.print(" 7: ");
-    Serial.println(feedbackOut->cmdLed);
-#endif
-  } else {
-#ifdef SERIAL_DEBUG
-    Serial.println("Non-valid data skipped");
-#endif
-    return 1;
-  }
-
-  return 0;
-}
-
-uint8_t kart_readFeedbackFront() {
-  // Enable Rx on this channel
-  kart_swuartFront.listen();
-#ifdef SERIAL_DEBUG
-  Serial.println("Front listening");
-#endif
-  return kart_readFeedback(&kart_swuartFront, &kart_feedbackFront);
-}
-
-uint8_t kart_readFeedbackRear() {
-  // Enable Rx on this channel
-  kart_swuartRear.listen();
-  Serial.println("Rear listening");
-  return kart_readFeedback(&kart_swuartRear, &kart_feedbackRear);
-}
-
-void kart_setHorn(uint8_t state) {
-  digitalWrite(PIN_HORN, !!state);
-}
-
-void kart_calibrate_adc() {
-  kart_smAdcCalibration.state = AC_START;
-  kart_smAdcCalibration.startTime = millis();
-  kart_smAdcCalibration.stepStartTime = kart_smAdcCalibration.startTime;
-}
-
-void kart_startup() {
-  kart_smStartup.state = ST_START;
-  kart_smStartup.startTime = millis();
-  kart_smStartup.stepStartTime = kart_smStartup.startTime;
-}
-
-void kart_shutdown() {
-  kart_smShutdown.state = SD_START;
-  kart_smShutdown.startTime = millis();
-  kart_smShutdown.stepStartTime = kart_smShutdown.startTime;
-}
-
-void kart_startTurnIndicator() {
-  kart_smTurnIndicator.state = TI_START;
-  kart_smTurnIndicator.startTime = millis();
-  kart_smTurnIndicator.stepStartTime = kart_smTurnIndicator.startTime;
-}
-
-void kart_stopTurnIndicator() {
-  kart_smTurnIndicator.state = TI_END;
-  kart_smTurnIndicator.stepStartTime = millis();
-}
-
-void kart_startReverseBeep() {
-  kart_smReverseBeep.state = RB_START;
-  kart_smReverseBeep.startTime = millis();
-  kart_smReverseBeep.stepStartTime = kart_smReverseBeep.startTime;
-}
-
-void kart_stopReverseBeep() {
-  kart_smReverseBeep.state = RB_END;
-  kart_smReverseBeep.stepStartTime = millis();
-}
-
-void kart_processMotorFrontEnableSwitch() {
-  kart_motorFrontEnabled = kart_getInput(INPUT_POS_MOTOR_FRONT_ENABLE);
-}
-
-void kart_processMotorRearEnableSwitch() {
-  kart_motorRearEnabled = kart_getInput(INPUT_POS_MOTOR_REAR_ENABLE);
-}
-
-void kart_processHeadlightsSwitch() {
-  if (!kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && !kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
-    // State: Off (Daytime running lights)
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 0);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 0);
-    kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 0);
-    kart_setOutput(OUTPUT_POS_IND_HORN, 0);
-    if (kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
-    kart_headlights = HL_DRL;
-  } else if (kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && !kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
-    // State: Low
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 0);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 1);
-    kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 1);
-    kart_setOutput(OUTPUT_POS_IND_HORN, 1);
-    if (kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
-    kart_headlights = HL_LOW;
-  } else if (kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
-    // State: High
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 1);
-    kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 1);
-    kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 1);
-    kart_setOutput(OUTPUT_POS_IND_HORN, 1);
-    if (kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
-    kart_headlights = HL_HIGH;
-  }
-  kart_updateWS2812();
-}
-
-void kart_processHazardButton() {
-  if (kart_getInput(INPUT_POS_INDICATOR_HAZARD)) {
-    if (kart_turnIndicator == TURN_HAZARD) {
-      // If hazards are on, temporarily set to OFF
-      // to enable kart_processTurnIndicatorSwitch() to execute
+    if (!kart_getInput(INPUT_POS_INDICATOR_LEFT) && !kart_getInput(INPUT_POS_INDICATOR_RIGHT)) {
+      // State: No turn
       kart_stopTurnIndicator();
       kart_turnIndicator = TURN_OFF;
-
-      // Revert to state determined by indicator switch
-      kart_processTurnIndicatorSwitch();
-
-      // Illuminate button again if necessary
-      kart_processHeadlightsSwitch();
-    } else {
-      // Else, enable hazards
-      kart_turnIndicator = TURN_HAZARD;
+    } else if (kart_getInput(INPUT_POS_INDICATOR_LEFT) && !kart_getInput(INPUT_POS_INDICATOR_RIGHT)) {
+      // State: Turn left
+      kart_turnIndicator = TURN_LEFT;
+      kart_startTurnIndicator();
+    } else if (!kart_getInput(INPUT_POS_INDICATOR_LEFT) && kart_getInput(INPUT_POS_INDICATOR_RIGHT)) {
+      // State: Turn right
+      kart_turnIndicator = TURN_RIGHT;
       kart_startTurnIndicator();
     }
   }
-}
 
-void kart_processForwardReverseSwitch() {
-  if (!kart_getInput(INPUT_POS_FORWARD)) {
-    kart_direction = DIR_REVERSE;
-    kart_startReverseBeep();
-  } else {
-    kart_direction = DIR_FORWARD;
-    kart_stopReverseBeep();
-  }
-  kart_updateWS2812();
-}
+  void kart_loop() {
+    kart_updateInputs();
+    kart_prevThrottleInput = kart_throttleInput;
+    kart_prevBrakeInput = kart_brakeInput;
+    kart_throttleInput = MEDIANFILTER_Insert(&kart_medianFilterThrottle, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minThrottle, kart_adc_calibration_values.maxThrottle, 0, THROTTLE_MAX));
+    kart_brakeInput = MEDIANFILTER_Insert(&kart_medianFilterBrake, kart_prepare_adc_value(analogRead(PIN_ANALOG_BRAKE), kart_adc_calibration_values.minBrake, kart_adc_calibration_values.maxBrake, 0, BRAKE_MAX));
 
-void kart_processHornButton() {
-  kart_setHorn(kart_getInput(INPUT_POS_HORN));
-}
+    switch (kart_state) {
+      case STATE_SHUTDOWN:
+        {
+          // Check for ignition on
+          if (kart_getInput(INPUT_POS_IGNITION)) {
+            if (kart_getInput(INPUT_POS_INDICATOR_HAZARD) && kart_getInput(INPUT_POS_HORN)) {
+              // If Hazard and Horn buttons are pressed during startup, enter ADC calibration mode
+              kart_calibrate_adc();
+              kart_state = STATE_ADC_CALIBRATION;
+            } else {
+              kart_startup();
+              kart_state = STATE_STARTING_UP;
+            }
+          }
+          break;
+        }
 
-void kart_processTurnIndicatorSwitch() {
-  // Ignore switch if hazards are on
-  if (kart_turnIndicator == TURN_HAZARD) return;
-
-  if (!kart_getInput(INPUT_POS_INDICATOR_LEFT) && !kart_getInput(INPUT_POS_INDICATOR_RIGHT)) {
-    // State: No turn
-    kart_stopTurnIndicator();
-    kart_turnIndicator = TURN_OFF;
-  } else if (kart_getInput(INPUT_POS_INDICATOR_LEFT) && !kart_getInput(INPUT_POS_INDICATOR_RIGHT)) {
-    // State: Turn left
-    kart_turnIndicator = TURN_LEFT;
-    kart_startTurnIndicator();
-  } else if (!kart_getInput(INPUT_POS_INDICATOR_LEFT) && kart_getInput(INPUT_POS_INDICATOR_RIGHT)) {
-    // State: Turn right
-    kart_turnIndicator = TURN_RIGHT;
-    kart_startTurnIndicator();
-  }
-}
-
-void kart_loop() {
-  kart_updateInputs();
-  kart_prevThrottleInput = kart_throttleInput;
-  kart_prevBrakeInput = kart_brakeInput;
-  kart_throttleInput = MEDIANFILTER_Insert(&kart_medianFilterThrottle, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minThrottle, kart_adc_calibration_values.maxThrottle, 0, THROTTLE_MAX));
-  kart_brakeInput = MEDIANFILTER_Insert(&kart_medianFilterBrake, kart_prepare_adc_value(analogRead(PIN_ANALOG_BRAKE), kart_adc_calibration_values.minBrake, kart_adc_calibration_values.maxBrake, 0, BRAKE_MAX));
-
-  switch (kart_state) {
-    case STATE_SHUTDOWN:
-      {
-        // Check for ignition on
-        if (kart_getInput(INPUT_POS_IGNITION)) {
-          if (kart_getInput(INPUT_POS_INDICATOR_HAZARD) && kart_getInput(INPUT_POS_HORN)) {
-            // If Hazard and Horn buttons are pressed during startup, enter ADC calibration mode
-            kart_calibrate_adc();
-            kart_state = STATE_ADC_CALIBRATION;
-          } else {
+      case STATE_ADC_CALIBRATION:
+        {
+          kart_adc_calibration_loop();
+          if (kart_smAdcCalibration.state == AC_END) {
             kart_startup();
             kart_state = STATE_STARTING_UP;
           }
+          break;
         }
-        break;
-      }
 
-    case STATE_ADC_CALIBRATION:
-      {
-        kart_adc_calibration_loop();
-        if (kart_smAdcCalibration.state == AC_END) {
-          kart_startup();
-          kart_state = STATE_STARTING_UP;
+      case STATE_STARTING_UP:
+        {
+          kart_startup_loop();
+          kart_turnIndicator_loop();
+          if (kart_smStartup.state == ST_END) kart_state = STATE_OPERATIONAL;
+          break;
         }
-        break;
-      }
 
-    case STATE_STARTING_UP:
-      {
-        kart_startup_loop();
-        kart_turnIndicator_loop();
-        if (kart_smStartup.state == ST_END) kart_state = STATE_OPERATIONAL;
-        break;
-      }
+      case STATE_OPERATIONAL:
+        {
+          kart_turnIndicator_loop();
+          kart_reverseBeep_loop();
+          kart_operation_loop();
 
-    case STATE_OPERATIONAL:
-      {
-        kart_turnIndicator_loop();
-        kart_reverseBeep_loop();
-        kart_operation_loop();
-
-        // Check for ignition off
-        if (!kart_getInput(INPUT_POS_IGNITION)) {
-          kart_shutdown();
-          kart_state = STATE_SHUTTING_DOWN;
+          // Check for ignition off
+          if (!kart_getInput(INPUT_POS_IGNITION)) {
+            kart_shutdown();
+            kart_state = STATE_SHUTTING_DOWN;
+          }
+          break;
         }
-        break;
-      }
 
-    case STATE_SHUTTING_DOWN:
-      {
-        kart_shutdown_loop();
-        kart_turnIndicator_loop();
-        if (kart_smShutdown.state == SD_END) kart_state = STATE_SHUTDOWN;
-        break;
-      }
+      case STATE_SHUTTING_DOWN:
+        {
+          kart_shutdown_loop();
+          kart_turnIndicator_loop();
+          if (kart_smShutdown.state == SD_END) kart_state = STATE_SHUTDOWN;
+          break;
+        }
+    }
+
+    kart_updateOutputs();
   }
 
-  kart_updateOutputs();
-}
+  void kart_adc_calibration_loop() {
+    uint64_t now = millis();
+    uint64_t totalTimePassed = now - kart_smAdcCalibration.startTime;
+    uint64_t stepTimePassed = now - kart_smAdcCalibration.stepStartTime;
 
-void kart_adc_calibration_loop() {
-  uint64_t now = millis();
-  uint64_t totalTimePassed = now - kart_smAdcCalibration.startTime;
-  uint64_t stepTimePassed = now - kart_smAdcCalibration.stepStartTime;
-
-  switch (kart_smAdcCalibration.state) {
-    case AC_START:
-      {
-        // Beep: ADC calibration start
-        tone(PIN_BUZZER, 2000);
-        kart_smAdcCalibration.state = AC_BEEP_START;
-        kart_smAdcCalibration.stepStartTime = now;
-        break;
-      }
-
-    case AC_BEEP_START:
-      {
-        if (stepTimePassed >= 500) {
-          // Stop beep
-          noTone(PIN_BUZZER);
-
-          // Prepare calibration
-#ifdef SERIAL_DEBUG
-          Serial.println("Starting ADC calibration");
-#endif
-          kart_adc_calibration_values.minThrottle = 1023;
-          kart_adc_calibration_values.maxThrottle = 0;
-          kart_adc_calibration_values.minBrake = 1023;
-          kart_adc_calibration_values.maxBrake = 0;
-
-          kart_smAdcCalibration.state = AC_CALIBRATE;
+    switch (kart_smAdcCalibration.state) {
+      case AC_START:
+        {
+          // Beep: ADC calibration start
+          tone(PIN_BUZZER, 2000);
+          kart_smAdcCalibration.state = AC_BEEP_START;
           kart_smAdcCalibration.stepStartTime = now;
+          break;
         }
-        break;
-      }
 
-    case AC_CALIBRATE:
-      {
-        // Do calibration
-        int16_t adcThrottle = analogRead(PIN_ANALOG_THROTTLE);
-        int16_t adcBrake = analogRead(PIN_ANALOG_BRAKE);
-        if (adcThrottle + (ADC_TOLERANCE / 2) < kart_adc_calibration_values.minThrottle) kart_adc_calibration_values.minThrottle = adcThrottle + (ADC_TOLERANCE / 2);
-        if (adcThrottle - (ADC_TOLERANCE / 2) > kart_adc_calibration_values.maxThrottle) kart_adc_calibration_values.maxThrottle = adcThrottle - (ADC_TOLERANCE / 2);
-        if (adcBrake + (ADC_TOLERANCE / 2) < kart_adc_calibration_values.minBrake) kart_adc_calibration_values.minBrake = adcBrake + (ADC_TOLERANCE / 2);
-        if (adcBrake - (ADC_TOLERANCE / 2) > kart_adc_calibration_values.maxBrake) kart_adc_calibration_values.maxBrake = adcBrake - (ADC_TOLERANCE / 2);
+      case AC_BEEP_START:
+        {
+          if (stepTimePassed >= 500) {
+            // Stop beep
+            noTone(PIN_BUZZER);
 
-        if (stepTimePassed >= 10000) {
-          // Finish calibration
+            // Prepare calibration
 #ifdef SERIAL_DEBUG
-          Serial.println("New ADC calibration values:");
-          Serial.print("  Throttle Min: ");
-          Serial.println(kart_adc_calibration_values.minThrottle);
-          Serial.print("  Throttle Max: ");
-          Serial.println(kart_adc_calibration_values.maxThrottle);
-          Serial.print("  Brake Min:    ");
-          Serial.println(kart_adc_calibration_values.minBrake);
-          Serial.print("  Brake Max:    ");
-          Serial.println(kart_adc_calibration_values.maxBrake);
+            Serial.println("Starting ADC calibration");
+#endif
+            kart_adc_calibration_values.minThrottle = 1023;
+            kart_adc_calibration_values.maxThrottle = 0;
+            kart_adc_calibration_values.minBrake = 1023;
+            kart_adc_calibration_values.maxBrake = 0;
+
+            kart_smAdcCalibration.state = AC_CALIBRATE;
+            kart_smAdcCalibration.stepStartTime = now;
+          }
+          break;
+        }
+
+      case AC_CALIBRATE:
+        {
+          // Do calibration
+          int16_t adcThrottle = analogRead(PIN_ANALOG_THROTTLE);
+          int16_t adcBrake = analogRead(PIN_ANALOG_BRAKE);
+          if (adcThrottle + (ADC_TOLERANCE / 2) < kart_adc_calibration_values.minThrottle) kart_adc_calibration_values.minThrottle = adcThrottle + (ADC_TOLERANCE / 2);
+          if (adcThrottle - (ADC_TOLERANCE / 2) > kart_adc_calibration_values.maxThrottle) kart_adc_calibration_values.maxThrottle = adcThrottle - (ADC_TOLERANCE / 2);
+          if (adcBrake + (ADC_TOLERANCE / 2) < kart_adc_calibration_values.minBrake) kart_adc_calibration_values.minBrake = adcBrake + (ADC_TOLERANCE / 2);
+          if (adcBrake - (ADC_TOLERANCE / 2) > kart_adc_calibration_values.maxBrake) kart_adc_calibration_values.maxBrake = adcBrake - (ADC_TOLERANCE / 2);
+
+          if (stepTimePassed >= 10000) {
+            // Finish calibration
+#ifdef SERIAL_DEBUG
+            Serial.println("New ADC calibration values:");
+            Serial.print("  Throttle Min: ");
+            Serial.println(kart_adc_calibration_values.minThrottle);
+            Serial.print("  Throttle Max: ");
+            Serial.println(kart_adc_calibration_values.maxThrottle);
+            Serial.print("  Brake Min:    ");
+            Serial.println(kart_adc_calibration_values.minBrake);
+            Serial.print("  Brake Max:    ");
+            Serial.println(kart_adc_calibration_values.maxBrake);
 #endif
 
-          if ((kart_adc_calibration_values.maxThrottle - kart_adc_calibration_values.minThrottle < 50 && kart_adc_calibration_values.maxThrottle - kart_adc_calibration_values.minThrottle > -50)
-              || (kart_adc_calibration_values.maxBrake - kart_adc_calibration_values.minBrake < 50 && kart_adc_calibration_values.maxBrake - kart_adc_calibration_values.minBrake > -50)) {  // Spread too narrow
+            if ((kart_adc_calibration_values.maxThrottle - kart_adc_calibration_values.minThrottle < 50 && kart_adc_calibration_values.maxThrottle - kart_adc_calibration_values.minThrottle > -50)
+                || (kart_adc_calibration_values.maxBrake - kart_adc_calibration_values.minBrake < 50 && kart_adc_calibration_values.maxBrake - kart_adc_calibration_values.minBrake > -50)) {  // Spread too narrow
 #ifdef SERIAL_DEBUG
-            Serial.println("Aborting calibration - spread too narrow!");
-            // Beep: ADC calibration end (Fail)
-            tone(PIN_BUZZER, 200);
+              Serial.println("Aborting calibration - spread too narrow!");
+              // Beep: ADC calibration end (Fail)
+              tone(PIN_BUZZER, 200);
+              kart_smAdcCalibration.state = AC_BEEP_END;
+              kart_smAdcCalibration.stepStartTime = now;
+              break;
+#endif
+            }
+
+            EEPROM.write(0x00, kart_adc_calibration_values.minThrottle >> 8);
+            EEPROM.write(0x01, kart_adc_calibration_values.minThrottle & 0xFF);
+            EEPROM.write(0x02, kart_adc_calibration_values.maxThrottle >> 8);
+            EEPROM.write(0x03, kart_adc_calibration_values.maxThrottle & 0xFF);
+            EEPROM.write(0x04, kart_adc_calibration_values.minBrake >> 8);
+            EEPROM.write(0x05, kart_adc_calibration_values.minBrake & 0xFF);
+            EEPROM.write(0x06, kart_adc_calibration_values.maxBrake >> 8);
+            EEPROM.write(0x07, kart_adc_calibration_values.maxBrake & 0xFF);
+
+            // Beep: ADC calibration end (Success)
+            tone(PIN_BUZZER, 4000);
             kart_smAdcCalibration.state = AC_BEEP_END;
             kart_smAdcCalibration.stepStartTime = now;
-            break;
-#endif
           }
-
-          EEPROM.write(0x00, kart_adc_calibration_values.minThrottle >> 8);
-          EEPROM.write(0x01, kart_adc_calibration_values.minThrottle & 0xFF);
-          EEPROM.write(0x02, kart_adc_calibration_values.maxThrottle >> 8);
-          EEPROM.write(0x03, kart_adc_calibration_values.maxThrottle & 0xFF);
-          EEPROM.write(0x04, kart_adc_calibration_values.minBrake >> 8);
-          EEPROM.write(0x05, kart_adc_calibration_values.minBrake & 0xFF);
-          EEPROM.write(0x06, kart_adc_calibration_values.maxBrake >> 8);
-          EEPROM.write(0x07, kart_adc_calibration_values.maxBrake & 0xFF);
-
-          // Beep: ADC calibration end (Success)
-          tone(PIN_BUZZER, 4000);
-          kart_smAdcCalibration.state = AC_BEEP_END;
-          kart_smAdcCalibration.stepStartTime = now;
+          break;
         }
-        break;
-      }
 
-    case AC_BEEP_END:
-      {
-        if (stepTimePassed >= 500) {
-          // Stop beep
-          noTone(PIN_BUZZER);
-          kart_smAdcCalibration.state = AC_END;
-          kart_smAdcCalibration.stepStartTime = now;
+      case AC_BEEP_END:
+        {
+          if (stepTimePassed >= 500) {
+            // Stop beep
+            noTone(PIN_BUZZER);
+            kart_smAdcCalibration.state = AC_END;
+            kart_smAdcCalibration.stepStartTime = now;
+          }
+          break;
         }
-        break;
-      }
+    }
   }
-}
 
-void kart_startup_loop() {
-  uint64_t now = millis();
-  uint64_t totalTimePassed = now - kart_smStartup.startTime;
-  uint64_t stepTimePassed = now - kart_smStartup.stepStartTime;
+  void kart_startup_loop() {
+    uint64_t now = millis();
+    uint64_t totalTimePassed = now - kart_smStartup.startTime;
+    uint64_t stepTimePassed = now - kart_smStartup.stepStartTime;
 
-  switch (kart_smStartup.state) {
-    case ST_START:
-      {
-        // Test buzzer
-        tone(PIN_BUZZER, 1500);
-
-        // Turn on all indicators
-        kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, 1);
-        kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, 1);
-        kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, 1);
-        kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, 1);
-        kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 1);
-        kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
-        kart_setOutput(OUTPUT_POS_IND_HORN, 1);
-        kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 1);
-        kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 1);
-
-        // Set LED strip to red
-        for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
-          kart_ws2812.setPixelColor(i, kart_ws2812.Color(255, 0, 0));
-        }
-        kart_ws2812.show();
-        kart_smStartup.state = ST_ALL_ON;
-        kart_smStartup.stepStartTime = now;
-        break;
-      }
-
-    case ST_ALL_ON:
-      {
-        if (stepTimePassed >= 250) {
-          // Turn off buzzer
-          noTone(PIN_BUZZER);
-          kart_smStartup.state = ST_BUZZER_OFF;
-          kart_smStartup.stepStartTime = now;
-        }
-        break;
-      }
-
-    case ST_BUZZER_OFF:
-      {
-        if (totalTimePassed >= 666) {
-          // Set LED strip to green
-          for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
-            kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 255, 0));
-          }
-          kart_ws2812.show();
-          kart_smStartup.state = ST_WS2812_GREEN;
-          kart_smStartup.stepStartTime = now;
-        }
-        break;
-      }
-
-    case ST_WS2812_GREEN:
-      {
-        if (stepTimePassed >= 666) {
-          // Set LED strip to blue
-          for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
-            kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 0, 255));
-          }
-          kart_ws2812.show();
-          kart_smStartup.state = ST_WS2812_BLUE;
-          kart_smStartup.stepStartTime = now;
-        }
-        break;
-      }
-
-    case ST_WS2812_BLUE:
-      {
-        if (totalTimePassed >= 2000) {
-          // Turn off all indicators and LED strip
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, 0);
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, 0);
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, 0);
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, 0);
-          kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 0);
-          kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
-          kart_setOutput(OUTPUT_POS_IND_HORN, 0);
-          kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
-          kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
-          for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
-            kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 0, 0));
-          }
-          kart_ws2812.show();
-
-          // Enable mainboards
-          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 1);
-          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 1);
-          kart_smStartup.state = ST_MAINBOARD_ENABLE;
-          kart_smStartup.stepStartTime = now;
-        }
-        break;
-      }
-
-    case ST_MAINBOARD_ENABLE:
-      {
-        if (stepTimePassed >= 500) {
-          // Stop enabling mainboards
-          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 0);
-          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 0);
-          kart_smStartup.state = ST_MAINBOARD_DEADTIME;
-          kart_smStartup.stepStartTime = now;
-        }
-        break;
-      }
-
-    case ST_MAINBOARD_DEADTIME:
-      {
-        if (stepTimePassed >= 2000) {
-          // Wait after enabling mainboards
-
-          // Process all switches/buttons once to establish initial state
-          kart_processMotorFrontEnableSwitch();
-          kart_processMotorRearEnableSwitch();
-          kart_processHeadlightsSwitch();
-          kart_processHazardButton();
-          kart_processForwardReverseSwitch();
-          kart_processHornButton();
-          kart_processTurnIndicatorSwitch();
-
-          kart_smStartup.state = ST_END;
-          kart_smStartup.stepStartTime = now;
-        }
-        break;
-      }
-  }
-}
-
-void kart_shutdown_loop() {
-  uint64_t now = millis();
-  uint64_t totalTimePassed = now - kart_smShutdown.startTime;
-  uint64_t stepTimePassed = now - kart_smShutdown.stepStartTime;
-
-  switch (kart_smShutdown.state) {
-    case SD_START:
-      {
-        // Turn off horn
-        kart_setHorn(0);
-
-        // Disable mainboards
-        kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 1);
-        kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 1);
-        kart_smShutdown.state = SD_MAINBOARD_DISABLE;
-        kart_smShutdown.stepStartTime = now;
-        break;
-      }
-
-    case SD_MAINBOARD_DISABLE:
-      {
-        if (stepTimePassed >= 500) {
-          // Stop disabling mainboards
-          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 0);
-          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 0);
-          kart_smShutdown.state = SD_MAINBOARD_DEADTIME;
-          kart_smShutdown.stepStartTime = now;
-        }
-        break;
-      }
-
-    case SD_MAINBOARD_DEADTIME:
-      {
-        if (stepTimePassed >= 2000) {
-          // Wait after disabling mainboards
-
-          // Turn off headlights and turn indicators
-          kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 0);
-          kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 0);
-          kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 0);
-          kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 0);
-          kart_headlights = HL_OFF;
-          kart_stopTurnIndicator();
-          kart_turnIndicator = TURN_OFF;
-
-          // Turn off all indicators
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, 0);
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, 0);
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, 0);
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, 0);
-          kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 0);
-          kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
-          kart_setOutput(OUTPUT_POS_IND_HORN, 0);
-          kart_smShutdown.state = SD_END;
-          kart_smShutdown.stepStartTime = now;
-        }
-        break;
-      }
-  }
-}
-
-void kart_turnIndicator_loop() {
-  uint64_t now = millis();
-  uint64_t totalTimePassed = now - kart_smTurnIndicator.startTime;
-  uint64_t stepTimePassed = now - kart_smTurnIndicator.stepStartTime;
-
-  switch (kart_smTurnIndicator.state) {
-    case TI_START:
-    case TI_OFF:
-      {
-        // If TI_START, no delay is needed to ensure that indicators turn on right away
-        if (kart_smTurnIndicator.state == TI_START || stepTimePassed >= 345) {
-          // Start beep
+    switch (kart_smStartup.state) {
+      case ST_START:
+        {
+          // Test buzzer
           tone(PIN_BUZZER, 1500);
 
-          // Turn on indicator
-          switch (kart_turnIndicator) {
-            case TURN_OFF:
-              {
-                // This shouldn't be needed
-                kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 0);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
-                kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 0);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
-                break;
-              }
+          // Turn on all indicators
+          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, 1);
+          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, 1);
+          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, 1);
+          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, 1);
+          kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 1);
+          kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
+          kart_setOutput(OUTPUT_POS_IND_HORN, 1);
+          kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 1);
+          kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 1);
 
-            case TURN_LEFT:
-              {
-                kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 1);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 1);
-                kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 0);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
-                break;
-              }
-
-            case TURN_RIGHT:
-              {
-                kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 0);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
-                kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 1);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 1);
-                break;
-              }
-
-            case TURN_HAZARD:
-              {
-                kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 1);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 1);
-                kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 1);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 1);
-                kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
-                break;
-              }
+          // Set LED strip to red
+          for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
+            kart_ws2812.setPixelColor(i, kart_ws2812.Color(255, 0, 0));
           }
-
-          kart_smTurnIndicator.state = TI_ON_BEEP;
-          kart_smTurnIndicator.stepStartTime = now;
-          kart_updateWS2812();
+          kart_ws2812.show();
+          kart_smStartup.state = ST_ALL_ON;
+          kart_smStartup.stepStartTime = now;
+          break;
         }
-        break;
-      }
 
-    case TI_ON_BEEP:
-      {
-        if (stepTimePassed >= 5) {
+      case ST_ALL_ON:
+        {
+          if (stepTimePassed >= 250) {
+            // Turn off buzzer
+            noTone(PIN_BUZZER);
+            kart_smStartup.state = ST_BUZZER_OFF;
+            kart_smStartup.stepStartTime = now;
+          }
+          break;
+        }
+
+      case ST_BUZZER_OFF:
+        {
+          if (totalTimePassed >= 666) {
+            // Set LED strip to green
+            for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
+              kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 255, 0));
+            }
+            kart_ws2812.show();
+            kart_smStartup.state = ST_WS2812_GREEN;
+            kart_smStartup.stepStartTime = now;
+          }
+          break;
+        }
+
+      case ST_WS2812_GREEN:
+        {
+          if (stepTimePassed >= 666) {
+            // Set LED strip to blue
+            for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
+              kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 0, 255));
+            }
+            kart_ws2812.show();
+            kart_smStartup.state = ST_WS2812_BLUE;
+            kart_smStartup.stepStartTime = now;
+          }
+          break;
+        }
+
+      case ST_WS2812_BLUE:
+        {
+          if (totalTimePassed >= 2000) {
+            // Turn off all indicators and LED strip
+            kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, 0);
+            kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, 0);
+            kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, 0);
+            kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, 0);
+            kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 0);
+            kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
+            kart_setOutput(OUTPUT_POS_IND_HORN, 0);
+            kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
+            kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
+            for (uint8_t i = 0; i < WS2812_NUM_LEDS; i++) {
+              kart_ws2812.setPixelColor(i, kart_ws2812.Color(0, 0, 0));
+            }
+            kart_ws2812.show();
+
+            // Enable mainboards
+            kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 1);
+            kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 1);
+            kart_smStartup.state = ST_MAINBOARD_ENABLE;
+            kart_smStartup.stepStartTime = now;
+          }
+          break;
+        }
+
+      case ST_MAINBOARD_ENABLE:
+        {
+          if (stepTimePassed >= 500) {
+            // Stop enabling mainboards
+            kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 0);
+            kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 0);
+            kart_smStartup.state = ST_MAINBOARD_DEADTIME;
+            kart_smStartup.stepStartTime = now;
+          }
+          break;
+        }
+
+      case ST_MAINBOARD_DEADTIME:
+        {
+          if (stepTimePassed >= 2000) {
+            // Wait after enabling mainboards
+
+            // Process all switches/buttons once to establish initial state
+            kart_processMotorFrontEnableSwitch();
+            kart_processMotorRearEnableSwitch();
+            kart_processHeadlightsSwitch();
+            kart_processHazardButton();
+            kart_processForwardReverseSwitch();
+            kart_processHornButton();
+            kart_processTurnIndicatorSwitch();
+
+            kart_smStartup.state = ST_END;
+            kart_smStartup.stepStartTime = now;
+          }
+          break;
+        }
+    }
+  }
+
+  void kart_shutdown_loop() {
+    uint64_t now = millis();
+    uint64_t totalTimePassed = now - kart_smShutdown.startTime;
+    uint64_t stepTimePassed = now - kart_smShutdown.stepStartTime;
+
+    switch (kart_smShutdown.state) {
+      case SD_START:
+        {
+          // Turn off horn
+          kart_setHorn(0);
+
+          // Disable mainboards
+          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 1);
+          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 1);
+          kart_smShutdown.state = SD_MAINBOARD_DISABLE;
+          kart_smShutdown.stepStartTime = now;
+          break;
+        }
+
+      case SD_MAINBOARD_DISABLE:
+        {
+          if (stepTimePassed >= 500) {
+            // Stop disabling mainboards
+            kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 0);
+            kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 0);
+            kart_smShutdown.state = SD_MAINBOARD_DEADTIME;
+            kart_smShutdown.stepStartTime = now;
+          }
+          break;
+        }
+
+      case SD_MAINBOARD_DEADTIME:
+        {
+          if (stepTimePassed >= 2000) {
+            // Wait after disabling mainboards
+
+            // Turn off headlights and turn indicators
+            kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 0);
+            kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 0);
+            kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 0);
+            kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 0);
+            kart_headlights = HL_OFF;
+            kart_stopTurnIndicator();
+            kart_turnIndicator = TURN_OFF;
+
+            // Turn off all indicators
+            kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, 0);
+            kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, 0);
+            kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, 0);
+            kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, 0);
+            kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 0);
+            kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
+            kart_setOutput(OUTPUT_POS_IND_HORN, 0);
+            kart_smShutdown.state = SD_END;
+            kart_smShutdown.stepStartTime = now;
+          }
+          break;
+        }
+    }
+  }
+
+  void kart_turnIndicator_loop() {
+    uint64_t now = millis();
+    uint64_t totalTimePassed = now - kart_smTurnIndicator.startTime;
+    uint64_t stepTimePassed = now - kart_smTurnIndicator.stepStartTime;
+
+    switch (kart_smTurnIndicator.state) {
+      case TI_START:
+      case TI_OFF:
+        {
+          // If TI_START, no delay is needed to ensure that indicators turn on right away
+          if (kart_smTurnIndicator.state == TI_START || stepTimePassed >= 345) {
+            // Start beep
+            tone(PIN_BUZZER, 1500);
+
+            // Turn on indicator
+            switch (kart_turnIndicator) {
+              case TURN_OFF:
+                {
+                  // This shouldn't be needed
+                  kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 0);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
+                  kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 0);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
+                  break;
+                }
+
+              case TURN_LEFT:
+                {
+                  kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 1);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 1);
+                  kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 0);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
+                  break;
+                }
+
+              case TURN_RIGHT:
+                {
+                  kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 0);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
+                  kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 1);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 1);
+                  break;
+                }
+
+              case TURN_HAZARD:
+                {
+                  kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 1);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 1);
+                  kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 1);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 1);
+                  kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
+                  break;
+                }
+            }
+
+            kart_smTurnIndicator.state = TI_ON_BEEP;
+            kart_smTurnIndicator.stepStartTime = now;
+            kart_updateWS2812();
+          }
+          break;
+        }
+
+      case TI_ON_BEEP:
+        {
+          if (stepTimePassed >= 5) {
+            // Stop beep
+            noTone(PIN_BUZZER);
+            kart_smTurnIndicator.state = TI_ON;
+            kart_smTurnIndicator.stepStartTime = now;
+          }
+          break;
+        }
+
+      case TI_ON:
+        {
+          if (stepTimePassed >= 345) {
+            // Start beep
+            tone(PIN_BUZZER, 1200);
+
+            // Turn off indicator
+            kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 0);
+            kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
+            kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 0);
+            kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
+            if (kart_turnIndicator == TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
+            kart_smTurnIndicator.state = TI_OFF_BEEP;
+            kart_smTurnIndicator.stepStartTime = now;
+            kart_updateWS2812();
+          }
+          break;
+        }
+
+      case TI_OFF_BEEP:
+        {
+          if (stepTimePassed >= 5) {
+            // Stop beep
+            noTone(PIN_BUZZER);
+            kart_smTurnIndicator.state = TI_OFF;
+            kart_smTurnIndicator.stepStartTime = now;
+          }
+          break;
+        }
+
+      case TI_END:
+        {
           // Stop beep
           noTone(PIN_BUZZER);
-          kart_smTurnIndicator.state = TI_ON;
-          kart_smTurnIndicator.stepStartTime = now;
-        }
-        break;
-      }
-
-    case TI_ON:
-      {
-        if (stepTimePassed >= 345) {
-          // Start beep
-          tone(PIN_BUZZER, 1200);
 
           // Turn off indicator
           kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 0);
@@ -1047,172 +1137,143 @@ void kart_turnIndicator_loop() {
           kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 0);
           kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
           if (kart_turnIndicator == TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
-          kart_smTurnIndicator.state = TI_OFF_BEEP;
-          kart_smTurnIndicator.stepStartTime = now;
           kart_updateWS2812();
-        }
-        break;
-      }
-
-    case TI_OFF_BEEP:
-      {
-        if (stepTimePassed >= 5) {
-          // Stop beep
-          noTone(PIN_BUZZER);
-          kart_smTurnIndicator.state = TI_OFF;
+          kart_smTurnIndicator.state = TI_INACTIVE;
           kart_smTurnIndicator.stepStartTime = now;
+          break;
         }
-        break;
-      }
 
-    case TI_END:
-      {
-        // Stop beep
-        noTone(PIN_BUZZER);
-
-        // Turn off indicator
-        kart_setOutput(OUTPUT_POS_INDICATOR_LEFT, 0);
-        kart_setOutput(OUTPUT_POS_IND_INDICATOR_LEFT, 0);
-        kart_setOutput(OUTPUT_POS_INDICATOR_RIGHT, 0);
-        kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
-        if (kart_turnIndicator == TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
-        kart_updateWS2812();
-        kart_smTurnIndicator.state = TI_INACTIVE;
-        kart_smTurnIndicator.stepStartTime = now;
-        break;
-      }
-
-    case TI_INACTIVE:
-      {
-        // Nothing to do
-        break;
-      }
+      case TI_INACTIVE:
+        {
+          // Nothing to do
+          break;
+        }
+    }
   }
-}
 
-void kart_reverseBeep_loop() {
-  uint64_t now = millis();
-  uint64_t totalTimePassed = now - kart_smReverseBeep.startTime;
-  uint64_t stepTimePassed = now - kart_smReverseBeep.stepStartTime;
+  void kart_reverseBeep_loop() {
+    uint64_t now = millis();
+    uint64_t totalTimePassed = now - kart_smReverseBeep.startTime;
+    uint64_t stepTimePassed = now - kart_smReverseBeep.stepStartTime;
 
-  switch (kart_smReverseBeep.state) {
-    case RB_START:
-    case RB_PAUSE:
-      {
-        // If RB_START, no delay is needed to ensure that we beep right away
-        if (kart_smReverseBeep.state == RB_START || stepTimePassed >= 500) {
-          // Start beep
-          tone(PIN_BUZZER, 2000);
-          kart_smReverseBeep.state = RB_BEEP;
-          kart_smReverseBeep.stepStartTime = now;
+    switch (kart_smReverseBeep.state) {
+      case RB_START:
+      case RB_PAUSE:
+        {
+          // If RB_START, no delay is needed to ensure that we beep right away
+          if (kart_smReverseBeep.state == RB_START || stepTimePassed >= 500) {
+            // Start beep
+            tone(PIN_BUZZER, 2000);
+            kart_smReverseBeep.state = RB_BEEP;
+            kart_smReverseBeep.stepStartTime = now;
+          }
+          break;
         }
-        break;
-      }
 
-    case RB_BEEP:
-      {
-        if (stepTimePassed >= 500) {
+      case RB_BEEP:
+        {
+          if (stepTimePassed >= 500) {
+            // Stop beep
+            noTone(PIN_BUZZER);
+            kart_smReverseBeep.state = RB_PAUSE;
+            kart_smReverseBeep.stepStartTime = now;
+          }
+          break;
+        }
+
+      case RB_END:
+        {
           // Stop beep
           noTone(PIN_BUZZER);
-          kart_smReverseBeep.state = RB_PAUSE;
+          kart_smReverseBeep.state = RB_INACTIVE;
           kart_smReverseBeep.stepStartTime = now;
+          break;
         }
-        break;
-      }
 
-    case RB_END:
-      {
-        // Stop beep
-        noTone(PIN_BUZZER);
-        kart_smReverseBeep.state = RB_INACTIVE;
-        kart_smReverseBeep.stepStartTime = now;
-        break;
-      }
-
-    case RB_INACTIVE:
-      {
-        // Nothing to do
-        break;
-      }
-  }
-}
-
-void kart_operation_loop() {
-  // Check Motor Front Enable switch
-  if (kart_inputChanged(INPUT_POS_MOTOR_FRONT_ENABLE)) {
-    kart_processMotorFrontEnableSwitch();
+      case RB_INACTIVE:
+        {
+          // Nothing to do
+          break;
+        }
+    }
   }
 
-  // Check Motor Rear Enable switch
-  if (kart_inputChanged(INPUT_POS_MOTOR_REAR_ENABLE)) {
-    kart_processMotorRearEnableSwitch();
-  }
+  void kart_operation_loop() {
+    // Check Motor Front Enable switch
+    if (kart_inputChanged(INPUT_POS_MOTOR_FRONT_ENABLE)) {
+      kart_processMotorFrontEnableSwitch();
+    }
 
-  // Check Headlights switch
-  if (kart_inputChanged(INPUT_POS_HEADLIGHTS_LOW) || kart_inputChanged(INPUT_POS_HEADLIGHTS_HIGH)) {
-    kart_processHeadlightsSwitch();
-  }
+    // Check Motor Rear Enable switch
+    if (kart_inputChanged(INPUT_POS_MOTOR_REAR_ENABLE)) {
+      kart_processMotorRearEnableSwitch();
+    }
 
-  // Check Hazard button
-  if (kart_inputChanged(INPUT_POS_INDICATOR_HAZARD)) {
-    kart_processHazardButton();
-  }
+    // Check Headlights switch
+    if (kart_inputChanged(INPUT_POS_HEADLIGHTS_LOW) || kart_inputChanged(INPUT_POS_HEADLIGHTS_HIGH)) {
+      kart_processHeadlightsSwitch();
+    }
 
-  // Check Forward/Reverse switch
-  if (kart_inputChanged(INPUT_POS_FORWARD)) {
-    kart_processForwardReverseSwitch();
-  }
+    // Check Hazard button
+    if (kart_inputChanged(INPUT_POS_INDICATOR_HAZARD)) {
+      kart_processHazardButton();
+    }
 
-  // Check Horn button
-  if (kart_inputChanged(INPUT_POS_HORN)) {
-    kart_processHornButton();
-  }
+    // Check Forward/Reverse switch
+    if (kart_inputChanged(INPUT_POS_FORWARD)) {
+      kart_processForwardReverseSwitch();
+    }
 
-  // Check Turn Indicator switch
-  if (kart_inputChanged(INPUT_POS_INDICATOR_LEFT) || kart_inputChanged(INPUT_POS_INDICATOR_RIGHT)) {
-    kart_processTurnIndicatorSwitch();
-  }
+    // Check Horn button
+    if (kart_inputChanged(INPUT_POS_HORN)) {
+      kart_processHornButton();
+    }
 
-  // Update brake lights if brake state has changed
-  if (kart_brakeInput != kart_prevBrakeInput) kart_updateWS2812();
+    // Check Turn Indicator switch
+    if (kart_inputChanged(INPUT_POS_INDICATOR_LEFT) || kart_inputChanged(INPUT_POS_INDICATOR_RIGHT)) {
+      kart_processTurnIndicatorSwitch();
+    }
 
-  // Read feedback
-  uint8_t feedbackErrorFront = kart_readFeedbackFront();
-  kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, feedbackErrorFront);
-  uint8_t feedbackErrorRear = kart_readFeedbackRear();
-  kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, feedbackErrorRear);
+    // Update brake lights if brake state has changed
+    if (kart_brakeInput != kart_prevBrakeInput) kart_updateWS2812();
 
-  // Process throttle and brake
-  // Limit throttle increase (both directions) but allow instant deceleration for safety
-  // TODO: Use feedback here!
-  kart_throttleOutput = kart_adc_rate_limit(kart_throttleInput - kart_brakeInput, kart_prevThrottleOutput, THROTTLE_RATE_LIMIT, 10000);
-  kart_prevThrottleOutput = kart_throttleOutput;
+    // Read feedback
+    uint8_t feedbackErrorFront = kart_readFeedbackFront();
+    kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, feedbackErrorFront);
+    uint8_t feedbackErrorRear = kart_readFeedbackRear();
+    kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, feedbackErrorRear);
+
+    // Process throttle and brake
+    // Limit throttle increase (both directions) but allow instant deceleration for safety
+    // TODO: Use feedback here!
+    kart_throttleOutput = kart_adc_rate_limit(kart_throttleInput - kart_brakeInput, kart_prevThrottleOutput, THROTTLE_RATE_LIMIT, 10000);
+    kart_prevThrottleOutput = kart_throttleOutput;
 
 #ifdef SERIAL_DEBUG
-  Serial.print("Throttle In:  ");
-  Serial.println(kart_throttleInput);
-  Serial.print("Brake In:     ");
-  Serial.println(kart_brakeInput);
-  Serial.print("Throttle Out: ");
-  Serial.println(kart_throttleOutput);
+    Serial.print("Throttle In:  ");
+    Serial.println(kart_throttleInput);
+    Serial.print("Brake In:     ");
+    Serial.println(kart_brakeInput);
+    Serial.print("Throttle Out: ");
+    Serial.println(kart_throttleOutput);
 #endif
 
-  // Set setpoints
-  if (kart_throttleOutput <= 0) {
-    // When braking, always send to both boards
-    kart_setpointFront = kart_throttleOutput;
-    kart_setpointRear = kart_throttleOutput;
-  } else {
-    // Otherwise, only send to enabled boards
-    kart_setpointFront = kart_motorFrontEnabled ? kart_throttleOutput : 0;
-    kart_setpointRear = kart_motorRearEnabled ? kart_throttleOutput : 0;
+    // Set setpoints
+    if (kart_throttleOutput <= 0) {
+      // When braking, always send to both boards
+      kart_setpointFront = kart_throttleOutput;
+      kart_setpointRear = kart_throttleOutput;
+    } else {
+      // Otherwise, only send to enabled boards
+      kart_setpointFront = kart_motorFrontEnabled ? kart_throttleOutput : 0;
+      kart_setpointRear = kart_motorRearEnabled ? kart_throttleOutput : 0;
+    }
+
+    // If a board has an error, always set setpoint to 0
+    if (feedbackErrorFront) kart_setpointFront = 0;
+    if (feedbackErrorRear) kart_setpointRear = 0;
+
+    // Send setpoints
+    kart_sendSetpointFront(kart_setpointFront);
+    kart_sendSetpointRear(kart_setpointRear);
   }
-
-  // If a board has an error, always set setpoint to 0
-  if (feedbackErrorFront) kart_setpointFront = 0;
-  if (feedbackErrorRear) kart_setpointRear = 0;
-
-  // Send setpoints
-  kart_sendSetpointFront(kart_setpointFront);
-  kart_sendSetpointRear(kart_setpointRear);
-}
