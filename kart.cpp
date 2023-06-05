@@ -39,6 +39,9 @@ static int16_t kart_brakeInput = 0;
 static int16_t kart_throttleOutput = 0;
 static int16_t kart_prevThrottleOutput = 0;
 
+static uint8_t kart_motorFrontEnabled = 0;
+static uint8_t kart_motorRearEnabled = 0;
+
 static kart_state_t kart_state = STATE_SHUTDOWN;
 static kart_headlights_t kart_headlights = HL_OFF;
 static kart_direction_t kart_direction = DIR_FORWARD;
@@ -314,6 +317,9 @@ void kart_sendSetpointFront(int16_t speed) {
   kart_commandFront.speed = speed;
   kart_commandFront.checksum = (uint16_t)(kart_commandFront.start ^ kart_commandFront.steer ^ kart_commandFront.speed);
   kart_swuartFront.write((uint8_t*)&kart_commandFront, sizeof(kart_commandFront));
+
+  // Enable "Active" LED if setpoint != 0
+  kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, speed != 0);
 }
 
 void kart_sendSetpointRear(int16_t speed) {
@@ -322,6 +328,9 @@ void kart_sendSetpointRear(int16_t speed) {
   kart_commandRear.speed = speed;
   kart_commandRear.checksum = (uint16_t)(kart_commandRear.start ^ kart_commandRear.steer ^ kart_commandRear.speed);
   kart_swuartRear.write((uint8_t*)&kart_commandRear, sizeof(kart_commandRear));
+
+  // Enable "Active" LED if setpoint != 0
+  kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, speed != 0);
 }
 
 void kart_setHorn(uint8_t state) {
@@ -358,9 +367,11 @@ void kart_stopTurnIndicator() {
 }
 
 void kart_processMotorFrontEnableSwitch() {
+  kart_motorFrontEnabled = kart_getInput(INPUT_POS_MOTOR_FRONT_ENABLE);
 }
 
 void kart_processMotorRearEnableSwitch() {
+  kart_motorRearEnabled = kart_getInput(INPUT_POS_MOTOR_REAR_ENABLE);
 }
 
 void kart_processHeadlightsSwitch() {
@@ -981,6 +992,13 @@ void kart_operation_loop() {
   kart_prevThrottleOutput = kart_throttleOutput;
 
   // Send setpoints
-  kart_sendSetpointFront(kart_throttleOutput);
-  kart_sendSetpointRear(kart_throttleOutput);
+  if (kart_throttleOutput <= 0) {
+    // When braking, always send to both boards
+    kart_sendSetpointFront(kart_throttleOutput);
+    kart_sendSetpointRear(kart_throttleOutput);
+  } else {
+    // Otherwise, only send to enabled boards
+    kart_sendSetpointFront(kart_motorFrontEnabled ? kart_throttleOutput : 0);
+    kart_sendSetpointRear(kart_motorRearEnabled ? kart_throttleOutput : 0);
+  }
 }
