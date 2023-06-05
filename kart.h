@@ -51,8 +51,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define THROTTLE_RATE_LIMIT 1000  // [bit] Maximum positive throttle change per loop cycle (positive meaning away from 0 in both directions)
 #define ADC_FILTER_SIZE 5         // Number of ADC readings to use for median filter
 
-#define THROTTLE_MAX 500  // [bit] Maximum throttle value
-#define BRAKE_MAX 500     // [bit] Maximum brake value
+#define THROTTLE_MAX 1000  // [bit] Maximum throttle value
+#define BRAKE_MAX 1000     // [bit] Maximum brake value
 
 #define FEEDBACK_RX_TIMEOUT 50  // Motor board feedback receive timeout in milliseconds
 
