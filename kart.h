@@ -144,6 +144,7 @@ typedef struct {
 typedef enum {
   STATE_SHUTDOWN,
   STATE_ADC_CALIBRATION,
+  STATE_MANUAL_ENABLE,
   STATE_STARTING_UP,
   STATE_OPERATIONAL,
   STATE_SHUTTING_DOWN
@@ -174,6 +175,15 @@ enum kart_adc_cal_substate {
   AC_CALIBRATE,
   AC_BEEP_END,
   AC_END
+};
+
+enum kart_manual_enable_substate {
+  ME_START,
+  ME_BEEP_START,
+  ME_WAIT_RELEASE,
+  ME_ACTIVE,
+  ME_BEEP_END,
+  ME_END
 };
 
 enum kart_startup_substate {
@@ -269,6 +279,7 @@ uint8_t kart_readFeedbackFront();
 uint8_t kart_readFeedbackRear();
 void kart_setHorn(uint8_t state);
 void kart_calibrate_adc();
+void kart_start_manual_enable_mode();
 void kart_startup();
 void kart_shutdown();
 void kart_startTurnIndicator();
@@ -284,6 +295,7 @@ void kart_processHornButton();
 void kart_processTurnIndicatorSwitch();
 void kart_loop();
 void kart_adc_calibration_loop();
+void kart_manual_enable_loop();
 void kart_startup_loop();
 void kart_shutdown_loop();
 void kart_turnIndicator_loop();

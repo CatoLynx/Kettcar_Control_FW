@@ -57,6 +57,7 @@ static kart_turn_indicator_t kart_turnIndicator = TURN_OFF;
 static kart_adc_calibration_values_t kart_adc_calibration_values = { 0, 0, 0, 0 };
 
 static kart_stateMachine_t kart_smAdcCalibration = { AC_START, 0, 0 };
+static kart_stateMachine_t kart_smManualEnable = { ME_START, 0, 0 };
 static kart_stateMachine_t kart_smStartup = { ST_START, 0, 0 };
 static kart_stateMachine_t kart_smShutdown = { SD_START, 0, 0 };
 static kart_stateMachine_t kart_smTurnIndicator = { TI_INACTIVE, 0, 0 };
@@ -527,6 +528,12 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     kart_smAdcCalibration.stepStartTime = kart_smAdcCalibration.startTime;
   }
 
+  void kart_start_manual_enable_mode() {
+    kart_smManualEnable.state = ME_START;
+    kart_smManualEnable.startTime = millis();
+    kart_smManualEnable.stepStartTime = kart_smManualEnable.startTime;
+  }
+
   void kart_startup() {
     kart_smStartup.state = ST_START;
     kart_smStartup.startTime = millis();
@@ -672,7 +679,12 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
         {
           // Check for ignition on
           if (kart_getInput(INPUT_POS_IGNITION)) {
-            if (kart_getInput(INPUT_POS_INDICATOR_HAZARD) && kart_getInput(INPUT_POS_HORN)) {
+            if (!kart_getInput(INPUT_POS_FORWARD) && kart_getInput(INPUT_POS_INDICATOR_RIGHT) && kart_getInput(INPUT_POS_INDICATOR_HAZARD) && kart_getInput(INPUT_POS_HORN)) {
+              // If Reverse, Indicator Right, Hazard and Horn buttons/switches are pressed during startup, enter manual board enable mode
+              // This can be used when reprogramming the mainboards
+              kart_start_manual_enable_mode();
+              kart_state = STATE_MANUAL_ENABLE;
+            } else if (kart_getInput(INPUT_POS_INDICATOR_HAZARD) && kart_getInput(INPUT_POS_HORN)) {
               // If Hazard and Horn buttons are pressed during startup, enter ADC calibration mode
               kart_calibrate_adc();
               kart_state = STATE_ADC_CALIBRATION;
@@ -690,6 +702,16 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
           if (kart_smAdcCalibration.state == AC_END) {
             kart_startup();
             kart_state = STATE_STARTING_UP;
+          }
+          break;
+        }
+
+      case STATE_MANUAL_ENABLE:
+        {
+          kart_manual_enable_loop();
+          if (kart_smManualEnable.state == ME_END) {
+            kart_state = kart_state = STATE_SHUTDOWN;
+            ;
           }
           break;
         }
@@ -824,6 +846,71 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
             noTone(PIN_BUZZER);
             kart_smAdcCalibration.state = AC_END;
             kart_smAdcCalibration.stepStartTime = now;
+          }
+          break;
+        }
+    }
+  }
+
+  void kart_manual_enable_loop() {
+    uint64_t now = millis();
+    uint64_t totalTimePassed = now - kart_smManualEnable.startTime;
+    uint64_t stepTimePassed = now - kart_smManualEnable.stepStartTime;
+
+    switch (kart_smManualEnable.state) {
+      case ME_START:
+        {
+          // Beep: Manual enable start
+          tone(PIN_BUZZER, 200);
+          kart_smManualEnable.state = ME_BEEP_START;
+          kart_smManualEnable.stepStartTime = now;
+          break;
+        }
+
+      case ME_BEEP_START:
+        {
+          if (stepTimePassed >= 500) {
+            // Stop beep
+            noTone(PIN_BUZZER);
+            kart_smManualEnable.state = ME_WAIT_RELEASE;
+            kart_smManualEnable.stepStartTime = now;
+          }
+          break;
+        }
+
+      case ME_WAIT_RELEASE:
+        {
+          // Wait until Hazard and Horn buttons are released
+          if (!kart_getInput(INPUT_POS_INDICATOR_HAZARD) && !kart_getInput(INPUT_POS_HORN)) {
+            kart_smManualEnable.state = ME_ACTIVE;
+            kart_smManualEnable.stepStartTime = now;
+          }
+          break;
+        }
+
+      case ME_ACTIVE:
+        {
+          // Pass-through from buttons to enable outputs
+          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, kart_getInput(INPUT_POS_INDICATOR_HAZARD));
+          kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, kart_getInput(INPUT_POS_HORN));
+
+          // Leave mode when ignition is turned off
+          if (!kart_getInput(INPUT_POS_IGNITION)) {
+            // Beep: Manual enable end
+            tone(PIN_BUZZER, 4000);
+            kart_smManualEnable.state = ME_BEEP_END;
+            kart_smManualEnable.stepStartTime = now;
+          }
+          break;
+        }
+
+      case ME_BEEP_END:
+        {
+          if (stepTimePassed >= 500) {
+            // Stop beep
+            noTone(PIN_BUZZER);
+            kart_smManualEnable.state = ME_END;
+            kart_smManualEnable.stepStartTime = now;
           }
           break;
         }
