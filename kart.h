@@ -18,6 +18,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <Arduino.h>
 
 
+#define SERIAL_DEBUG
+
+
 #define PIN_HORN 2
 #define PIN_BUZZER 7
 #define PIN_UART_SEL 6
@@ -41,6 +44,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define PIN_I2C_SCL A5
 #define PIN_ANALOG_THROTTLE A6
 #define PIN_ANALOG_BRAKE A7
+
+
+#define ADC_TOLERANCE 20          // [bit] ADC tolerance (before input is discarded as implausible)
+#define THROTTLE_RATE_LIMIT 1000  // [bit] Maximum positive throttle change per UPDATE_INTERVAL (positive meaning away from 0 in both directions)
+#define ADC_FILTER_SIZE 5         // Number of ADC readings to use for median filter
+
+#define THROTTLE_MAX 500  // [bit] Maximum throttle value
+#define BRAKE_MAX 500     // [bit] Maximum brake value
 
 
 #define NUM_INPUTS 16
@@ -115,6 +126,7 @@ typedef struct {
 
 typedef enum {
   STATE_SHUTDOWN,
+  STATE_ADC_CALIBRATION,
   STATE_STARTING_UP,
   STATE_OPERATIONAL,
   STATE_SHUTTING_DOWN
@@ -138,6 +150,14 @@ typedef enum {
   TURN_RIGHT,
   TURN_HAZARD
 } kart_turn_indicator_t;
+
+enum kart_adc_cal_substate {
+  AC_START,
+  AC_BEEP_START,
+  AC_CALIBRATE,
+  AC_BEEP_END,
+  AC_END
+};
 
 enum kart_startup_substate {
   ST_START,
@@ -174,6 +194,13 @@ typedef struct {
   uint16_t checksum;
 } kart_serial_command_t;
 
+typedef struct {
+  int16_t minThrottle;
+  int16_t maxThrottle;
+  int16_t minBrake;
+  int16_t maxBrake;
+} kart_adc_calibration_values_t;
+
 
 void kart_init();
 void kart_updateInputs();
@@ -181,10 +208,13 @@ void kart_updateOutputs();
 uint8_t kart_getInput(uint8_t pos);
 uint8_t kart_inputChanged(uint8_t pos);
 void kart_setOutput(uint8_t pos, uint8_t state);
+int16_t kart_prepare_adc_value(int16_t in, int16_t minIn, int16_t maxIn, int16_t minOut, int16_t maxOut);
+int16_t kart_adc_rate_limit(int16_t inVal, int16_t prevVal, int16_t maxRateInc, int16_t maxRateDec);
 void kart_updateWS2812();
 void kart_sendSetpointFront(int16_t steer, int16_t speed);
 void kart_sendSetpointRear(int16_t steer, int16_t speed);
 void kart_setHorn(uint8_t state);
+void kart_calibrate_adc();
 void kart_startup();
 void kart_shutdown();
 void kart_startTurnIndicator();
@@ -197,6 +227,7 @@ void kart_processForwardReverseSwitch();
 void kart_processHornButton();
 void kart_processTurnIndicatorSwitch();
 void kart_loop();
+void kart_adc_calibration_loop();
 void kart_startup_loop();
 void kart_shutdown_loop();
 void kart_turnIndicator_loop();

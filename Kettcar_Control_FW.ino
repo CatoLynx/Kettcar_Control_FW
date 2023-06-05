@@ -23,7 +23,9 @@ uint8_t global_ledState = 0;
 
 
 void setup() {
+#ifdef SERIAL_DEBUG
   Serial.begin(115200);
+#endif
   kart_init();
 }
 

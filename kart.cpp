@@ -16,29 +16,68 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "kart.h"
+#include "MedianFilter.h"
 #include <Adafruit_NeoPixel.h>
+#include <EEPROM.h>
 #include <SoftwareSerial.h>
 
 
-Adafruit_NeoPixel kart_ws2812(WS2812_NUM_LEDS, PIN_WS2812_DATA, NEO_GRB + NEO_KHZ800);
-SoftwareSerial kart_swuartFront(PIN_SWUART_F_RX, PIN_SWUART_F_TX);
-SoftwareSerial kart_swuartRear(PIN_SWUART_R_RX, PIN_SWUART_R_TX);
-kart_serial_command_t kart_commandFront;
-kart_serial_command_t kart_commandRear;
+static Adafruit_NeoPixel kart_ws2812(WS2812_NUM_LEDS, PIN_WS2812_DATA, NEO_GRB + NEO_KHZ800);
+static SoftwareSerial kart_swuartFront(PIN_SWUART_F_RX, PIN_SWUART_F_TX);
+static SoftwareSerial kart_swuartRear(PIN_SWUART_R_RX, PIN_SWUART_R_TX);
+static kart_serial_command_t kart_commandFront;
+static kart_serial_command_t kart_commandRear;
 
-kart_input_t kart_inputs[NUM_INPUTS] = { { 0, 0, 0, 0, 0, 0 } };
-kart_output_t kart_outputs[NUM_OUTPUTS] = { { 0 } };
+static kart_input_t kart_inputs[NUM_INPUTS] = { { 0, 0, 0, 0, 0, 0 } };
+static kart_output_t kart_outputs[NUM_OUTPUTS] = { { 0 } };
+static sMedianFilter_t kart_medianFilterThrottle;
+static sMedianNode_t kart_medianBufferThrottle[ADC_FILTER_SIZE];
+static sMedianFilter_t kart_medianFilterBrake;
+static sMedianNode_t kart_medianBufferBrake[ADC_FILTER_SIZE];
+static int16_t kart_throttleInput = 0;
+static int16_t kart_brakeInput = 0;
+static int16_t kart_throttleOutput = 0;
+static int16_t kart_prevThrottleOutput = 0;
 
-kart_state_t kart_state = STATE_SHUTDOWN;
-kart_headlights_t kart_headlights = HL_OFF;
-kart_direction_t kart_direction = DIR_FORWARD;
-kart_turn_indicator_t kart_turnIndicator = TURN_OFF;
-kart_stateMachine_t kart_smStartup = { ST_START, 0, 0 };
-kart_stateMachine_t kart_smShutdown = { SD_START, 0, 0 };
-kart_stateMachine_t kart_smTurnIndicator = { TI_INACTIVE, 0, 0 };
+static kart_state_t kart_state = STATE_SHUTDOWN;
+static kart_headlights_t kart_headlights = HL_OFF;
+static kart_direction_t kart_direction = DIR_FORWARD;
+static kart_turn_indicator_t kart_turnIndicator = TURN_OFF;
+static kart_adc_calibration_values_t kart_adc_calibration_values = { 0, 0, 0, 0 };
+
+static kart_stateMachine_t kart_smAdcCalibration = { AC_START, 0, 0 };
+static kart_stateMachine_t kart_smStartup = { ST_START, 0, 0 };
+static kart_stateMachine_t kart_smShutdown = { SD_START, 0, 0 };
+static kart_stateMachine_t kart_smTurnIndicator = { TI_INACTIVE, 0, 0 };
 
 
 void kart_init() {
+  kart_medianFilterThrottle.numNodes = ADC_FILTER_SIZE;
+  kart_medianFilterThrottle.medianBuffer = kart_medianBufferThrottle;
+  MEDIANFILTER_Init(&kart_medianFilterThrottle);
+
+  kart_medianFilterBrake.numNodes = ADC_FILTER_SIZE;
+  kart_medianFilterBrake.medianBuffer = kart_medianBufferBrake;
+  MEDIANFILTER_Init(&kart_medianFilterBrake);
+
+  // Load ADC calibration values
+  kart_adc_calibration_values.minThrottle = ((uint16_t)EEPROM.read(0x00) << 8) | EEPROM.read(0x01);
+  kart_adc_calibration_values.maxThrottle = ((uint16_t)EEPROM.read(0x02) << 8) | EEPROM.read(0x03);
+  kart_adc_calibration_values.minBrake = ((uint16_t)EEPROM.read(0x04) << 8) | EEPROM.read(0x05);
+  kart_adc_calibration_values.maxBrake = ((uint16_t)EEPROM.read(0x06) << 8) | EEPROM.read(0x07);
+
+#ifdef SERIAL_DEBUG
+  Serial.println("Calibration values in use:");
+  Serial.print("  Throttle Min: ");
+  Serial.println(kart_adc_calibration_values.minThrottle);
+  Serial.print("  Throttle Max: ");
+  Serial.println(kart_adc_calibration_values.maxThrottle);
+  Serial.print("  Brake Min:    ");
+  Serial.println(kart_adc_calibration_values.minBrake);
+  Serial.print("  Brake Max:    ");
+  Serial.println(kart_adc_calibration_values.maxBrake);
+#endif
+
   digitalWrite(PIN_HORN, LOW);
   digitalWrite(PIN_BUZZER, LOW);
   digitalWrite(PIN_UART_SEL, LOW);
@@ -152,6 +191,47 @@ void kart_setOutput(uint8_t pos, uint8_t state) {
   kart_outputs[pos].state = !!state;
 }
 
+int16_t kart_prepare_adc_value(int16_t in, int16_t minIn, int16_t maxIn, int16_t minOut, int16_t maxOut) {
+  // In:  Raw ADC value
+  // Out: - 0 if ADC value is outside the calibrated range (plus tolerance)
+  //      - Otherwise, a value from 0 to 1000 proportional to input
+
+  if (minIn - in > ADC_TOLERANCE) return 0;
+  if (in - maxIn > ADC_TOLERANCE) return 0;
+  if (in < minIn) in = minIn;
+  if (in > maxIn) in = maxIn;
+  return map(in, minIn, maxIn, minOut, maxOut);
+}
+
+int16_t kart_adc_rate_limit(int16_t inVal, int16_t prevVal, int16_t maxRateInc, int16_t maxRateDec) {
+  if ((prevVal > 0 && inVal < 0) || (prevVal < 0 && inVal > 0)) {
+    // Sign switch. Adjust inVal to 0 to separate the "decrease in magnitude"
+    // and "increase in magnitude" phases.
+    inVal = 0;
+  }
+
+  if (prevVal > 0 && inVal >= 0) {
+    if (inVal > prevVal) {
+      // Stay positive, increase in magnitude
+      if (inVal - prevVal > maxRateInc) return prevVal + maxRateInc;
+    } else {
+      // Stay positive, decrease in magnitude
+      if (prevVal - inVal > maxRateDec) return prevVal - maxRateDec;
+    }
+  } else if (prevVal < 0 && inVal <= 0) {
+    if (inVal < prevVal) {
+      // Stay negative, increase in magnitude
+      if (prevVal - inVal > maxRateInc) return prevVal - maxRateInc;
+    } else {
+      // Stay negative, decrease in magnitude
+      if (inVal - prevVal > maxRateDec) return prevVal + maxRateDec;
+    }
+  }
+
+  // In any other situation, just pass through
+  return inVal;
+}
+
 void kart_updateWS2812() {
   kart_ws2812.clear();
   uint32_t seg0Color = 0;
@@ -246,6 +326,12 @@ void kart_sendSetpointRear(int16_t speed) {
 
 void kart_setHorn(uint8_t state) {
   digitalWrite(PIN_HORN, !!state);
+}
+
+void kart_calibrate_adc() {
+  kart_smAdcCalibration.state = AC_START;
+  kart_smAdcCalibration.startTime = millis();
+  kart_smAdcCalibration.stepStartTime = kart_smAdcCalibration.startTime;
 }
 
 void kart_startup() {
@@ -367,12 +453,30 @@ void kart_processTurnIndicatorSwitch() {
 
 void kart_loop() {
   kart_updateInputs();
+  kart_throttleInput = MEDIANFILTER_Insert(&kart_medianFilterThrottle, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minThrottle, kart_adc_calibration_values.maxThrottle, 0, THROTTLE_MAX));
+  kart_brakeInput = MEDIANFILTER_Insert(&kart_medianFilterBrake, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minBrake, kart_adc_calibration_values.maxBrake, 0, BRAKE_MAX));
 
   switch (kart_state) {
     case STATE_SHUTDOWN:
       {
         // Check for ignition on
         if (kart_getInput(INPUT_POS_IGNITION)) {
+          if (kart_getInput(INPUT_POS_INDICATOR_HAZARD) && kart_getInput(INPUT_POS_HORN)) {
+            // If Hazard and Horn buttons are pressed during startup, enter ADC calibration mode
+            kart_calibrate_adc();
+            kart_state = STATE_ADC_CALIBRATION;
+          } else {
+            kart_startup();
+            kart_state = STATE_STARTING_UP;
+          }
+        }
+        break;
+      }
+
+    case STATE_ADC_CALIBRATION:
+      {
+        kart_adc_calibration_loop();
+        if (kart_smAdcCalibration.state == AC_END) {
           kart_startup();
           kart_state = STATE_STARTING_UP;
         }
@@ -410,6 +514,108 @@ void kart_loop() {
   }
 
   kart_updateOutputs();
+}
+
+void kart_adc_calibration_loop() {
+  uint64_t now = millis();
+  uint64_t totalTimePassed = now - kart_smAdcCalibration.startTime;
+  uint64_t stepTimePassed = now - kart_smAdcCalibration.stepStartTime;
+
+  switch (kart_smAdcCalibration.state) {
+    case AC_START:
+      {
+        // Beep: ADC calibration start
+        tone(PIN_BUZZER, 2000);
+        kart_smAdcCalibration.state = AC_BEEP_START;
+        kart_smAdcCalibration.stepStartTime = now;
+        break;
+      }
+
+    case AC_BEEP_START:
+      {
+        if (stepTimePassed >= 500) {
+          // Stop beep
+          noTone(PIN_BUZZER);
+
+          // Prepare calibration
+#ifdef SERIAL_DEBUG
+          Serial.println("Starting ADC calibration");
+#endif
+          kart_adc_calibration_values.minThrottle = 1023;
+          kart_adc_calibration_values.maxThrottle = 0;
+          kart_adc_calibration_values.minBrake = 1023;
+          kart_adc_calibration_values.maxBrake = 0;
+
+          kart_smAdcCalibration.state = AC_CALIBRATE;
+          kart_smAdcCalibration.stepStartTime = now;
+        }
+        break;
+      }
+
+    case AC_CALIBRATE:
+      {
+        // Do calibration
+        int16_t adcThrottle = analogRead(PIN_ANALOG_THROTTLE);
+        int16_t adcBrake = analogRead(PIN_ANALOG_BRAKE);
+        if (adcThrottle + (ADC_TOLERANCE / 2) < kart_adc_calibration_values.minThrottle) kart_adc_calibration_values.minThrottle = adcThrottle + (ADC_TOLERANCE / 2);
+        if (adcThrottle - (ADC_TOLERANCE / 2) > kart_adc_calibration_values.maxThrottle) kart_adc_calibration_values.maxThrottle = adcThrottle - (ADC_TOLERANCE / 2);
+        if (adcBrake + (ADC_TOLERANCE / 2) < kart_adc_calibration_values.minBrake) kart_adc_calibration_values.minBrake = adcBrake + (ADC_TOLERANCE / 2);
+        if (adcBrake - (ADC_TOLERANCE / 2) > kart_adc_calibration_values.maxBrake) kart_adc_calibration_values.maxBrake = adcBrake - (ADC_TOLERANCE / 2);
+
+        if (stepTimePassed >= 5000) {
+          // Finish calibration
+#ifdef SERIAL_DEBUG
+          Serial.println("New ADC calibration values:");
+          Serial.print("  Throttle Min: ");
+          Serial.println(kart_adc_calibration_values.minThrottle);
+          Serial.print("  Throttle Max: ");
+          Serial.println(kart_adc_calibration_values.maxThrottle);
+          Serial.print("  Brake Min:    ");
+          Serial.println(kart_adc_calibration_values.minBrake);
+          Serial.print("  Brake Max:    ");
+          Serial.println(kart_adc_calibration_values.maxBrake);
+#endif
+
+          if ((kart_adc_calibration_values.maxThrottle - kart_adc_calibration_values.minThrottle < 50 && kart_adc_calibration_values.maxThrottle - kart_adc_calibration_values.minThrottle > -50)
+              || (kart_adc_calibration_values.maxBrake - kart_adc_calibration_values.minBrake < 50 && kart_adc_calibration_values.maxBrake - kart_adc_calibration_values.minBrake > -50)) {  // Spread too narrow
+#ifdef SERIAL_DEBUG
+            Serial.println("Aborting calibration - spread too narrow!");
+            // Beep: ADC calibration end (Fail)
+            tone(PIN_BUZZER, 200);
+            kart_smAdcCalibration.state = AC_BEEP_END;
+            kart_smAdcCalibration.stepStartTime = now;
+            break;
+#endif
+          }
+
+          EEPROM.write(0x00, kart_adc_calibration_values.minThrottle >> 8);
+          EEPROM.write(0x01, kart_adc_calibration_values.minThrottle & 0xFF);
+          EEPROM.write(0x02, kart_adc_calibration_values.maxThrottle >> 8);
+          EEPROM.write(0x03, kart_adc_calibration_values.maxThrottle & 0xFF);
+          EEPROM.write(0x04, kart_adc_calibration_values.minBrake >> 8);
+          EEPROM.write(0x05, kart_adc_calibration_values.minBrake & 0xFF);
+          EEPROM.write(0x06, kart_adc_calibration_values.maxBrake >> 8);
+          EEPROM.write(0x07, kart_adc_calibration_values.maxBrake & 0xFF);
+
+          // Beep: ADC calibration end (Success)
+          tone(PIN_BUZZER, 4000);
+          kart_smAdcCalibration.state = AC_BEEP_END;
+          kart_smAdcCalibration.stepStartTime = now;
+        }
+        break;
+      }
+
+    case AC_BEEP_END:
+      {
+        if (stepTimePassed >= 500) {
+          // Stop beep
+          noTone(PIN_BUZZER);
+          kart_smAdcCalibration.state = AC_END;
+          kart_smAdcCalibration.stepStartTime = now;
+        }
+        break;
+      }
+  }
 }
 
 void kart_startup_loop() {
@@ -769,7 +975,12 @@ void kart_operation_loop() {
     kart_processTurnIndicatorSwitch();
   }
 
+  // Process throttle and brake
+  // Limit throttle increase (both directions) but allow instant deceleration for safety
+  kart_throttleOutput = kart_adc_rate_limit(kart_throttleInput - kart_brakeInput, kart_prevThrottleOutput, THROTTLE_RATE_LIMIT, 10000);
+  kart_prevThrottleOutput = kart_throttleOutput;
+
   // Send setpoints
-  kart_sendSetpointFront(0);
-  kart_sendSetpointRear(0);
+  kart_sendSetpointFront(kart_throttleOutput);
+  kart_sendSetpointRear(kart_throttleOutput);
 }
