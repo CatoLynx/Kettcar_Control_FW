@@ -252,14 +252,14 @@ void kart_updateWS2812() {
     if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
       seg0Color = WS2812_COLOR_INDICATOR;
     }
-  } else if (0 /* BRAKE */) {
+  } else if (kart_brakeInput > 0) {
     seg0Color = WS2812_COLOR_BRAKE;
   } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
     seg0Color = WS2812_COLOR_LIGHT;
   }
 
   // Segment 1: Brake > Reverse > Light
-  if (0 /* BRAKE */) {
+  if (kart_brakeInput > 0) {
     seg1Color = WS2812_COLOR_BRAKE;
   } else if (kart_direction == DIR_REVERSE) {
     seg1Color = WS2812_COLOR_REVERSE;
@@ -270,14 +270,14 @@ void kart_updateWS2812() {
   // Segment 2: Reverse > Brake > Light
   if (kart_direction == DIR_REVERSE) {
     seg2Color = WS2812_COLOR_REVERSE;
-  } else if (0 /* BRAKE */) {
+  } else if (kart_brakeInput > 0) {
     seg2Color = WS2812_COLOR_BRAKE;
   } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
     seg2Color = WS2812_COLOR_LIGHT;
   }
 
   // Segment 3: Brake > Reverse > Light
-  if (0 /* BRAKE */) {
+  if (kart_brakeInput > 0) {
     seg3Color = WS2812_COLOR_BRAKE;
   } else if (kart_direction == DIR_REVERSE) {
     seg3Color = WS2812_COLOR_REVERSE;
@@ -290,7 +290,7 @@ void kart_updateWS2812() {
     if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
       seg4Color = WS2812_COLOR_INDICATOR;
     }
-  } else if (0 /* BRAKE */) {
+  } else if (kart_brakeInput > 0) {
     seg4Color = WS2812_COLOR_BRAKE;
   } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
     seg4Color = WS2812_COLOR_LIGHT;
