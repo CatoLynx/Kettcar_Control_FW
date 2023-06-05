@@ -37,6 +37,8 @@ static sMedianFilter_t kart_medianFilterBrake;
 static sMedianNode_t kart_medianBufferBrake[ADC_FILTER_SIZE];
 static int16_t kart_throttleInput = 0;
 static int16_t kart_brakeInput = 0;
+static int16_t kart_prevThrottleInput = 0;
+static int16_t kart_prevBrakeInput = 0;
 static int16_t kart_throttleOutput = 0;
 static int16_t kart_prevThrottleOutput = 0;
 static int16_t kart_setpointFront = 0;
@@ -247,71 +249,78 @@ void kart_updateWS2812() {
   uint32_t seg3Color = 0;
   uint32_t seg4Color = 0;
 
-  // Segment 0: Indicator > Brake > Light
-  if (kart_turnIndicator == TURN_LEFT || kart_turnIndicator == TURN_HAZARD) {
-    if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
-      seg0Color = WS2812_COLOR_INDICATOR;
+  if (kart_state == STATE_OPERATIONAL) {
+    // Segment 0: Indicator > Brake > Light
+    if (kart_turnIndicator == TURN_LEFT || kart_turnIndicator == TURN_HAZARD) {
+      if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
+        seg0Color = WS2812_COLOR_INDICATOR;
+      }
+    } else if (kart_brakeInput > 0) {
+      seg0Color = WS2812_COLOR_BRAKE;
+    } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
+      seg0Color = WS2812_COLOR_LIGHT;
     }
-  } else if (kart_brakeInput > 0) {
-    seg0Color = WS2812_COLOR_BRAKE;
-  } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
-    seg0Color = WS2812_COLOR_LIGHT;
-  }
 
-  // Segment 1: Brake > Reverse > Light
-  if (kart_brakeInput > 0) {
-    seg1Color = WS2812_COLOR_BRAKE;
-  } else if (kart_direction == DIR_REVERSE) {
-    seg1Color = WS2812_COLOR_REVERSE;
-  } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
-    seg1Color = WS2812_COLOR_LIGHT;
-  }
-
-  // Segment 2: Reverse > Brake > Light
-  if (kart_direction == DIR_REVERSE) {
-    seg2Color = WS2812_COLOR_REVERSE;
-  } else if (kart_brakeInput > 0) {
-    seg2Color = WS2812_COLOR_BRAKE;
-  } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
-    seg2Color = WS2812_COLOR_LIGHT;
-  }
-
-  // Segment 3: Brake > Reverse > Light
-  if (kart_brakeInput > 0) {
-    seg3Color = WS2812_COLOR_BRAKE;
-  } else if (kart_direction == DIR_REVERSE) {
-    seg3Color = WS2812_COLOR_REVERSE;
-  } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
-    seg3Color = WS2812_COLOR_LIGHT;
-  }
-
-  // Segment 4: Indicator > Brake > Light
-  if (kart_turnIndicator == TURN_RIGHT || kart_turnIndicator == TURN_HAZARD) {
-    if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
-      seg4Color = WS2812_COLOR_INDICATOR;
+    // Segment 1: Brake > Reverse > Light
+    if (kart_brakeInput > 0) {
+      seg1Color = WS2812_COLOR_BRAKE;
+    } else if (kart_direction == DIR_REVERSE) {
+      seg1Color = WS2812_COLOR_REVERSE;
+    } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
+      seg1Color = WS2812_COLOR_LIGHT;
     }
-  } else if (kart_brakeInput > 0) {
-    seg4Color = WS2812_COLOR_BRAKE;
-  } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
-    seg4Color = WS2812_COLOR_LIGHT;
+
+    // Segment 2: Reverse > Brake > Light
+    if (kart_direction == DIR_REVERSE) {
+      seg2Color = WS2812_COLOR_REVERSE;
+    } else if (kart_brakeInput > 0) {
+      seg2Color = WS2812_COLOR_BRAKE;
+    } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
+      seg2Color = WS2812_COLOR_LIGHT;
+    }
+
+    // Segment 3: Brake > Reverse > Light
+    if (kart_brakeInput > 0) {
+      seg3Color = WS2812_COLOR_BRAKE;
+    } else if (kart_direction == DIR_REVERSE) {
+      seg3Color = WS2812_COLOR_REVERSE;
+    } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
+      seg3Color = WS2812_COLOR_LIGHT;
+    }
+
+    // Segment 4: Indicator > Brake > Light
+    if (kart_turnIndicator == TURN_RIGHT || kart_turnIndicator == TURN_HAZARD) {
+      if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
+        seg4Color = WS2812_COLOR_INDICATOR;
+      }
+    } else if (kart_brakeInput > 0) {
+      seg4Color = WS2812_COLOR_BRAKE;
+    } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
+      seg4Color = WS2812_COLOR_LIGHT;
+    }
+
+    for (uint8_t i = WS2812_SEG_0_START; i <= WS2812_SEG_0_END; i++) {
+      kart_ws2812.setPixelColor(i, seg0Color);
+    }
+    for (uint8_t i = WS2812_SEG_1_START; i <= WS2812_SEG_1_END; i++) {
+      kart_ws2812.setPixelColor(i, seg1Color);
+    }
+    for (uint8_t i = WS2812_SEG_2_START; i <= WS2812_SEG_2_END; i++) {
+      kart_ws2812.setPixelColor(i, seg2Color);
+    }
+    for (uint8_t i = WS2812_SEG_3_START; i <= WS2812_SEG_3_END; i++) {
+      kart_ws2812.setPixelColor(i, seg3Color);
+    }
+    for (uint8_t i = WS2812_SEG_4_START; i <= WS2812_SEG_4_END; i++) {
+      kart_ws2812.setPixelColor(i, seg4Color);
+    }
   }
 
-  for (uint8_t i = WS2812_SEG_0_START; i <= WS2812_SEG_0_END; i++) {
-    kart_ws2812.setPixelColor(i, seg0Color);
-  }
-  for (uint8_t i = WS2812_SEG_1_START; i <= WS2812_SEG_1_END; i++) {
-    kart_ws2812.setPixelColor(i, seg1Color);
-  }
-  for (uint8_t i = WS2812_SEG_2_START; i <= WS2812_SEG_2_END; i++) {
-    kart_ws2812.setPixelColor(i, seg2Color);
-  }
-  for (uint8_t i = WS2812_SEG_3_START; i <= WS2812_SEG_3_END; i++) {
-    kart_ws2812.setPixelColor(i, seg3Color);
-  }
-  for (uint8_t i = WS2812_SEG_4_START; i <= WS2812_SEG_4_END; i++) {
-    kart_ws2812.setPixelColor(i, seg4Color);
-  }
+  kart_ws2812.show();
+}
 
+void kart_turnOffWS2812() {
+  kart_ws2812.clear();
   kart_ws2812.show();
 }
 
@@ -338,6 +347,7 @@ void kart_sendSetpointRear(int16_t speed) {
 }
 
 uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedbackOut) {
+  // Returns 0 on success, 1 on error
   uint64_t startTime = millis();
   kart_serial_feedback_t feedbackIn = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
@@ -347,21 +357,29 @@ uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedba
     if (!(swuart->available())) continue;
     uint8_t byte = swuart->read();
     if (waitingForByteNo == 0) {
-      if (byte != 0xAB) continue;
+      if (byte != 0xCD) continue;
       waitingForByteNo = 1;
     } else if (waitingForByteNo == 1) {
-      if (byte != 0xCD) continue;
+      if (byte != 0xAB) continue;
       break;
     }
   }
-  if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) return 1;
+  if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) {
+#ifdef SERIAL_DEBUG
+    Serial.println("Rx timeout");
+#endif
+    return 1;
+  }
 
   // Manually set this since we just checked it and know it's correct
   feedbackIn.start = 0xABCD;
+#ifdef SERIAL_DEBUG
+  Serial.println("Start byte found");
+#endif
 
   // Start value (2 bytes) found, now read the remaining bytes with timeout
   uint8_t bytesRemaining = sizeof(kart_serial_feedback_t) - 2;
-  uint8_t *pFeedback = (uint8_t *)&feedbackIn;
+  uint8_t *pFeedback = (uint8_t *)&feedbackIn + 2;
   while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
     if (!(swuart->available())) continue;
     *pFeedback = swuart->read();
@@ -369,7 +387,22 @@ uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedba
     bytesRemaining--;
     if (bytesRemaining == 0) break;
   }
-  if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) return 1;
+  if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) {
+#ifdef SERIAL_DEBUG
+    Serial.println("Rx timeout");
+#endif
+    return 1;
+  }
+
+#ifdef SERIAL_DEBUG
+  uint8_t *rawData = (uint8_t *)&feedbackIn;
+  Serial.print("Raw feedback: ");
+  for (uint8_t i = 0; i < sizeof(kart_serial_feedback_t); i++) {
+    Serial.print(rawData[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+#endif
 
   // Verify checksum
   uint16_t checksum;
@@ -382,7 +415,8 @@ uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedba
     memcpy(feedbackOut, &feedbackIn, sizeof(kart_serial_feedback_t));
 
     // Print data to built-in Serial
-    /*Serial.print("1: ");
+#ifdef SERIAL_DEBUG
+    Serial.print("1: ");
     Serial.print(feedbackOut->cmd1);
     Serial.print(" 2: ");
     Serial.print(feedbackOut->cmd2);
@@ -395,9 +429,13 @@ uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedba
     Serial.print(" 6: ");
     Serial.print(feedbackOut->boardTemp);
     Serial.print(" 7: ");
-    Serial.println(feedbackOut->cmdLed);*/
+    Serial.println(feedbackOut->cmdLed);
+#endif
   } else {
-    //Serial.println("Non-valid data skipped");
+#ifdef SERIAL_DEBUG
+    Serial.println("Non-valid data skipped");
+#endif
+    return 1;
   }
 
   return 0;
@@ -406,12 +444,16 @@ uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedba
 uint8_t kart_readFeedbackFront() {
   // Enable Rx on this channel
   kart_swuartFront.listen();
+#ifdef SERIAL_DEBUG
+  Serial.println("Front listening");
+#endif
   return kart_readFeedback(&kart_swuartFront, &kart_feedbackFront);
 }
 
 uint8_t kart_readFeedbackRear() {
   // Enable Rx on this channel
   kart_swuartRear.listen();
+  Serial.println("Rear listening");
   return kart_readFeedback(&kart_swuartRear, &kart_feedbackRear);
 }
 
@@ -559,8 +601,10 @@ void kart_processTurnIndicatorSwitch() {
 
 void kart_loop() {
   kart_updateInputs();
+  kart_prevThrottleInput = kart_throttleInput;
+  kart_prevBrakeInput = kart_brakeInput;
   kart_throttleInput = MEDIANFILTER_Insert(&kart_medianFilterThrottle, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minThrottle, kart_adc_calibration_values.maxThrottle, 0, THROTTLE_MAX));
-  kart_brakeInput = MEDIANFILTER_Insert(&kart_medianFilterBrake, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minBrake, kart_adc_calibration_values.maxBrake, 0, BRAKE_MAX));
+  kart_brakeInput = MEDIANFILTER_Insert(&kart_medianFilterBrake, kart_prepare_adc_value(analogRead(PIN_ANALOG_BRAKE), kart_adc_calibration_values.minBrake, kart_adc_calibration_values.maxBrake, 0, BRAKE_MAX));
 
   switch (kart_state) {
     case STATE_SHUTDOWN:
@@ -599,9 +643,9 @@ void kart_loop() {
 
     case STATE_OPERATIONAL:
       {
-        kart_operation_loop();
         kart_turnIndicator_loop();
         kart_reverseBeep_loop();
+        kart_operation_loop();
 
         // Check for ignition off
         if (!kart_getInput(INPUT_POS_IGNITION)) {
@@ -669,7 +713,7 @@ void kart_adc_calibration_loop() {
         if (adcBrake + (ADC_TOLERANCE / 2) < kart_adc_calibration_values.minBrake) kart_adc_calibration_values.minBrake = adcBrake + (ADC_TOLERANCE / 2);
         if (adcBrake - (ADC_TOLERANCE / 2) > kart_adc_calibration_values.maxBrake) kart_adc_calibration_values.maxBrake = adcBrake - (ADC_TOLERANCE / 2);
 
-        if (stepTimePassed >= 5000) {
+        if (stepTimePassed >= 10000) {
           // Finish calibration
 #ifdef SERIAL_DEBUG
           Serial.println("New ADC calibration values:");
@@ -814,15 +858,6 @@ void kart_startup_loop() {
           }
           kart_ws2812.show();
 
-          // Process all switches/buttons once to establish initial state
-          kart_processMotorFrontEnableSwitch();
-          kart_processMotorRearEnableSwitch();
-          kart_processHeadlightsSwitch();
-          kart_processHazardButton();
-          kart_processForwardReverseSwitch();
-          kart_processHornButton();
-          kart_processTurnIndicatorSwitch();
-
           // Enable mainboards
           kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 1);
           kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 1);
@@ -848,6 +883,15 @@ void kart_startup_loop() {
       {
         if (stepTimePassed >= 2000) {
           // Wait after enabling mainboards
+
+          // Process all switches/buttons once to establish initial state
+          kart_processMotorFrontEnableSwitch();
+          kart_processMotorRearEnableSwitch();
+          kart_processHeadlightsSwitch();
+          kart_processHazardButton();
+          kart_processForwardReverseSwitch();
+          kart_processHornButton();
+          kart_processTurnIndicatorSwitch();
 
           kart_smStartup.state = ST_END;
           kart_smStartup.stepStartTime = now;
@@ -1070,8 +1114,8 @@ void kart_reverseBeep_loop() {
         if (stepTimePassed >= 500) {
           // Stop beep
           noTone(PIN_BUZZER);
-          kart_smTurnIndicator.state = RB_PAUSE;
-          kart_smTurnIndicator.stepStartTime = now;
+          kart_smReverseBeep.state = RB_PAUSE;
+          kart_smReverseBeep.stepStartTime = now;
         }
         break;
       }
@@ -1129,6 +1173,9 @@ void kart_operation_loop() {
     kart_processTurnIndicatorSwitch();
   }
 
+  // Update brake lights if brake state has changed
+  if (kart_brakeInput != kart_prevBrakeInput) kart_updateWS2812();
+
   // Read feedback
   uint8_t feedbackErrorFront = kart_readFeedbackFront();
   kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, feedbackErrorFront);
@@ -1140,6 +1187,15 @@ void kart_operation_loop() {
   // TODO: Use feedback here!
   kart_throttleOutput = kart_adc_rate_limit(kart_throttleInput - kart_brakeInput, kart_prevThrottleOutput, THROTTLE_RATE_LIMIT, 10000);
   kart_prevThrottleOutput = kart_throttleOutput;
+
+#ifdef SERIAL_DEBUG
+  Serial.print("Throttle In:  ");
+  Serial.println(kart_throttleInput);
+  Serial.print("Brake In:     ");
+  Serial.println(kart_brakeInput);
+  Serial.print("Throttle Out: ");
+  Serial.println(kart_throttleOutput);
+#endif
 
   // Set setpoints
   if (kart_throttleOutput <= 0) {

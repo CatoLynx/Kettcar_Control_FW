@@ -234,6 +234,7 @@ void kart_setOutput(uint8_t pos, uint8_t state);
 int16_t kart_prepare_adc_value(int16_t in, int16_t minIn, int16_t maxIn, int16_t minOut, int16_t maxOut);
 int16_t kart_adc_rate_limit(int16_t inVal, int16_t prevVal, int16_t maxRateInc, int16_t maxRateDec);
 void kart_updateWS2812();
+void kart_turnOffWS2812();
 void kart_sendSetpointFront(int16_t steer, int16_t speed);
 void kart_sendSetpointRear(int16_t steer, int16_t speed);
 uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedbackOut);
