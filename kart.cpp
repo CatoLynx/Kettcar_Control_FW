@@ -776,7 +776,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
           if (adcBrake + (ADC_TOLERANCE / 2) < kart_adc_calibration_values.minBrake) kart_adc_calibration_values.minBrake = adcBrake + (ADC_TOLERANCE / 2);
           if (adcBrake - (ADC_TOLERANCE / 2) > kart_adc_calibration_values.maxBrake) kart_adc_calibration_values.maxBrake = adcBrake - (ADC_TOLERANCE / 2);
 
-          if (stepTimePassed >= 10000) {
+          if (stepTimePassed >= 5000) {
             // Finish calibration
 #ifdef SERIAL_DEBUG
             Serial.println("New ADC calibration values:");
