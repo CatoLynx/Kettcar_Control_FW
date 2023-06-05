@@ -16,6 +16,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <Arduino.h>
+#include <SoftwareSerial.h>
 
 
 #define SERIAL_DEBUG
@@ -47,11 +48,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 #define ADC_TOLERANCE 20          // [bit] ADC tolerance (before input is discarded as implausible)
-#define THROTTLE_RATE_LIMIT 1000  // [bit] Maximum positive throttle change per UPDATE_INTERVAL (positive meaning away from 0 in both directions)
+#define THROTTLE_RATE_LIMIT 1000  // [bit] Maximum positive throttle change per loop cycle (positive meaning away from 0 in both directions)
 #define ADC_FILTER_SIZE 5         // Number of ADC readings to use for median filter
 
 #define THROTTLE_MAX 500  // [bit] Maximum throttle value
 #define BRAKE_MAX 500     // [bit] Maximum brake value
+
+#define FEEDBACK_RX_TIMEOUT 50  // Motor board feedback receive timeout in milliseconds
 
 
 #define NUM_INPUTS 16
@@ -195,6 +198,18 @@ typedef struct {
 } kart_serial_command_t;
 
 typedef struct {
+  uint16_t start;
+  int16_t cmd1;
+  int16_t cmd2;
+  int16_t speedR_meas;
+  int16_t speedL_meas;
+  int16_t batVoltage;
+  int16_t boardTemp;
+  uint16_t cmdLed;
+  uint16_t checksum;
+} kart_serial_feedback_t;
+
+typedef struct {
   int16_t minThrottle;
   int16_t maxThrottle;
   int16_t minBrake;
@@ -213,6 +228,9 @@ int16_t kart_adc_rate_limit(int16_t inVal, int16_t prevVal, int16_t maxRateInc, 
 void kart_updateWS2812();
 void kart_sendSetpointFront(int16_t steer, int16_t speed);
 void kart_sendSetpointRear(int16_t steer, int16_t speed);
+uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedbackOut);
+uint8_t kart_readFeedbackFront();
+uint8_t kart_readFeedbackRear();
 void kart_setHorn(uint8_t state);
 void kart_calibrate_adc();
 void kart_startup();

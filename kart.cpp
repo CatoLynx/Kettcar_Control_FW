@@ -19,14 +19,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "MedianFilter.h"
 #include <Adafruit_NeoPixel.h>
 #include <EEPROM.h>
-#include <SoftwareSerial.h>
 
 
 static Adafruit_NeoPixel kart_ws2812(WS2812_NUM_LEDS, PIN_WS2812_DATA, NEO_GRB + NEO_KHZ800);
 static SoftwareSerial kart_swuartFront(PIN_SWUART_F_RX, PIN_SWUART_F_TX);
 static SoftwareSerial kart_swuartRear(PIN_SWUART_R_RX, PIN_SWUART_R_TX);
-static kart_serial_command_t kart_commandFront;
-static kart_serial_command_t kart_commandRear;
+static kart_serial_command_t kart_commandFront = { 0, 0, 0, 0 };
+static kart_serial_command_t kart_commandRear = { 0, 0, 0, 0 };
+kart_serial_feedback_t kart_feedbackFront = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+kart_serial_feedback_t kart_feedbackRear = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 static kart_input_t kart_inputs[NUM_INPUTS] = { { 0, 0, 0, 0, 0, 0 } };
 static kart_output_t kart_outputs[NUM_OUTPUTS] = { { 0 } };
@@ -38,6 +39,8 @@ static int16_t kart_throttleInput = 0;
 static int16_t kart_brakeInput = 0;
 static int16_t kart_throttleOutput = 0;
 static int16_t kart_prevThrottleOutput = 0;
+static int16_t kart_setpointFront = 0;
+static int16_t kart_setpointRear = 0;
 
 static uint8_t kart_motorFrontEnabled = 0;
 static uint8_t kart_motorRearEnabled = 0;
@@ -316,7 +319,7 @@ void kart_sendSetpointFront(int16_t speed) {
   kart_commandFront.steer = 0;
   kart_commandFront.speed = speed;
   kart_commandFront.checksum = (uint16_t)(kart_commandFront.start ^ kart_commandFront.steer ^ kart_commandFront.speed);
-  kart_swuartFront.write((uint8_t*)&kart_commandFront, sizeof(kart_commandFront));
+  kart_swuartFront.write((uint8_t *)&kart_commandFront, sizeof(kart_commandFront));
 
   // Enable "Active" LED if setpoint != 0
   kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE, speed != 0);
@@ -327,10 +330,88 @@ void kart_sendSetpointRear(int16_t speed) {
   kart_commandRear.steer = 0;
   kart_commandRear.speed = speed;
   kart_commandRear.checksum = (uint16_t)(kart_commandRear.start ^ kart_commandRear.steer ^ kart_commandRear.speed);
-  kart_swuartRear.write((uint8_t*)&kart_commandRear, sizeof(kart_commandRear));
+  kart_swuartRear.write((uint8_t *)&kart_commandRear, sizeof(kart_commandRear));
 
   // Enable "Active" LED if setpoint != 0
   kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, speed != 0);
+}
+
+uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedbackOut) {
+  uint64_t startTime = millis();
+  kart_serial_feedback_t feedbackIn = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+  // Wait for start value with timeout
+  uint8_t waitingForByteNo = 0;
+  while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
+    if (!(swuart->available())) continue;
+    uint8_t byte = swuart->read();
+    if (waitingForByteNo == 0) {
+      if (byte != 0xAB) continue;
+      waitingForByteNo = 1;
+    } else if (waitingForByteNo == 1) {
+      if (byte != 0xCD) continue;
+      break;
+    }
+  }
+  if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) return 1;
+
+  // Manually set this since we just checked it and know it's correct
+  feedbackIn.start = 0xABCD;
+
+  // Start value (2 bytes) found, now read the remaining bytes with timeout
+  uint8_t bytesRemaining = sizeof(kart_serial_feedback_t) - 2;
+  uint8_t *pFeedback = (uint8_t *)&feedbackIn;
+  while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
+    if (!(swuart->available())) continue;
+    *pFeedback = swuart->read();
+    pFeedback++;
+    bytesRemaining--;
+    if (bytesRemaining == 0) break;
+  }
+  if (millis() - startTime >= FEEDBACK_RX_TIMEOUT) return 1;
+
+  // Verify checksum
+  uint16_t checksum;
+  checksum = (uint16_t)(feedbackIn.start ^ feedbackIn.cmd1 ^ feedbackIn.cmd2 ^ feedbackIn.speedR_meas ^ feedbackIn.speedL_meas
+                        ^ feedbackIn.batVoltage ^ feedbackIn.boardTemp ^ feedbackIn.cmdLed);
+
+  // Check validity of the new data
+  if (feedbackIn.start == 0xABCD && checksum == feedbackIn.checksum) {
+    // Copy the new data
+    memcpy(feedbackOut, &feedbackIn, sizeof(kart_serial_feedback_t));
+
+    // Print data to built-in Serial
+    /*Serial.print("1: ");
+    Serial.print(feedbackOut->cmd1);
+    Serial.print(" 2: ");
+    Serial.print(feedbackOut->cmd2);
+    Serial.print(" 3: ");
+    Serial.print(feedbackOut->speedR_meas);
+    Serial.print(" 4: ");
+    Serial.print(feedbackOut->speedL_meas);
+    Serial.print(" 5: ");
+    Serial.print(feedbackOut->batVoltage);
+    Serial.print(" 6: ");
+    Serial.print(feedbackOut->boardTemp);
+    Serial.print(" 7: ");
+    Serial.println(feedbackOut->cmdLed);*/
+  } else {
+    //Serial.println("Non-valid data skipped");
+  }
+
+  return 0;
+}
+
+uint8_t kart_readFeedbackFront() {
+  // Enable Rx on this channel
+  kart_swuartFront.listen();
+  return kart_readFeedback(&kart_swuartFront, &kart_feedbackFront);
+}
+
+uint8_t kart_readFeedbackRear() {
+  // Enable Rx on this channel
+  kart_swuartRear.listen();
+  return kart_readFeedback(&kart_swuartRear, &kart_feedbackRear);
 }
 
 void kart_setHorn(uint8_t state) {
@@ -986,19 +1067,34 @@ void kart_operation_loop() {
     kart_processTurnIndicatorSwitch();
   }
 
+  // Read feedback
+  uint8_t feedbackErrorFront = kart_readFeedbackFront();
+  kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, feedbackErrorFront);
+  uint8_t feedbackErrorRear = kart_readFeedbackRear();
+  kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, feedbackErrorRear);
+
   // Process throttle and brake
   // Limit throttle increase (both directions) but allow instant deceleration for safety
+  // TODO: Use feedback here!
   kart_throttleOutput = kart_adc_rate_limit(kart_throttleInput - kart_brakeInput, kart_prevThrottleOutput, THROTTLE_RATE_LIMIT, 10000);
   kart_prevThrottleOutput = kart_throttleOutput;
 
-  // Send setpoints
+  // Set setpoints
   if (kart_throttleOutput <= 0) {
     // When braking, always send to both boards
-    kart_sendSetpointFront(kart_throttleOutput);
-    kart_sendSetpointRear(kart_throttleOutput);
+    kart_setpointFront = kart_throttleOutput;
+    kart_setpointRear = kart_throttleOutput;
   } else {
     // Otherwise, only send to enabled boards
-    kart_sendSetpointFront(kart_motorFrontEnabled ? kart_throttleOutput : 0);
-    kart_sendSetpointRear(kart_motorRearEnabled ? kart_throttleOutput : 0);
+    kart_setpointFront = kart_motorFrontEnabled ? kart_throttleOutput : 0;
+    kart_setpointRear = kart_motorRearEnabled ? kart_throttleOutput : 0;
   }
+
+  // If a board has an error, always set setpoint to 0
+  if (feedbackErrorFront) kart_setpointFront = 0;
+  if (feedbackErrorRear) kart_setpointRear = 0;
+
+  // Send setpoints
+  kart_sendSetpointFront(kart_setpointFront);
+  kart_sendSetpointRear(kart_setpointRear);
 }
