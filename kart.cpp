@@ -397,6 +397,10 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     // Wait for start value with timeout
     uint8_t waitingForByteNo = 0;
     while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
+      if (kart_state == STATE_OPERATIONAL) {
+        kart_turnIndicator_loop();
+        kart_reverseBeep_loop();
+      }
       if (!(uart->available())) continue;
       uint8_t byte = uart->read();
       if (waitingForByteNo == 0) {
@@ -424,6 +428,10 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     uint8_t bytesRemaining = sizeof(kart_serial_feedback_t) - 2;
     uint8_t *pFeedback = (uint8_t *)&feedbackIn + 2;
     while (millis() - startTime < FEEDBACK_RX_TIMEOUT) {
+      if (kart_state == STATE_OPERATIONAL) {
+        kart_turnIndicator_loop();
+        kart_reverseBeep_loop();
+      }
       if (!(uart->available())) continue;
       *pFeedback = uart->read();
       pFeedback++;
