@@ -70,7 +70,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define OUTPUT_HARD_LIMIT_MIN -1000  // [bit] Absolute lower limit for throttle/brake output
 #define OUTPUT_HARD_LIMIT_MAX 1000   // [bit] Absolute upper limit for throttle/brake output
 
-#define FEEDBACK_RX_TIMEOUT 50  // Motor board feedback receive timeout in milliseconds
+#define USART_TX_INTERVAL 50    // [ms] Interval for sending USART data
+#define FEEDBACK_RX_TIMEOUT 30  // Motor board feedback receive timeout in milliseconds
 
 
 #define NUM_INPUTS 16
