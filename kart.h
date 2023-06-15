@@ -67,6 +67,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #define THROTTLE_MAX 1000  // [bit] Maximum throttle value
 #define BRAKE_MAX 1000     // [bit] Maximum brake value
+#define OUTPUT_HARD_LIMIT_MIN -1000  // [bit] Absolute lower limit for throttle/brake output
+#define OUTPUT_HARD_LIMIT_MAX 1000   // [bit] Absolute upper limit for throttle/brake output
 
 #define FEEDBACK_RX_TIMEOUT 50  // Motor board feedback receive timeout in milliseconds
 

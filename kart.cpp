@@ -1416,6 +1416,12 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     //if (feedbackErrorFront) kart_setpointFront = 0;
     //if (feedbackErrorRear) kart_setpointRear = 0;
 
+    // Hard output limit
+    if (kart_setpointFront < OUTPUT_HARD_LIMIT_MIN) kart_setpointFront = OUTPUT_HARD_LIMIT_MIN;
+    if (kart_setpointFront > OUTPUT_HARD_LIMIT_MAX) kart_setpointFront = OUTPUT_HARD_LIMIT_MAX;
+    if (kart_setpointRear < OUTPUT_HARD_LIMIT_MIN) kart_setpointRear = OUTPUT_HARD_LIMIT_MIN;
+    if (kart_setpointRear > OUTPUT_HARD_LIMIT_MAX) kart_setpointRear = OUTPUT_HARD_LIMIT_MAX;
+
 #ifdef SERIAL_DEBUG
     Serial.print("Setpoint Front: ");
     Serial.println(kart_setpointFront);
