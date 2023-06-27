@@ -259,7 +259,7 @@ void kart_updateWS2812() {
   uint32_t seg3Color = 0;
   uint32_t seg4Color = 0;
 
-  if (kart_state == STATE_OPERATIONAL) {
+  if (kart_state == STATE_OPERATIONAL || kart_state == STATE_STARTING_UP) {
     // Segment 0: Indicator > Brake > Light
     if (kart_turnIndicator == TURN_LEFT || kart_turnIndicator == TURN_HAZARD) {
       if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
