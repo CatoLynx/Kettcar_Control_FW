@@ -130,11 +130,11 @@ void kart_init() {
   kart_ws2812.begin();
 
 #ifdef MAINBOARD_SOFTWARE_SERIAL
-  kart_swuartFront.begin(115200);
-  kart_swuartRear.begin(115200);
+  kart_swuartFront.begin(USART_BAUD);
+  kart_swuartRear.begin(USART_BAUD);
 #endif
 #ifdef MAINBOARD_HARDWARE_SERIAL
-  Serial.begin(115200);
+  Serial.begin(USART_BAUD);
 #endif
 }
 
@@ -355,9 +355,9 @@ void kart_sendSetpointFront(int16_t speed) {
 #endif
 #ifdef MAINBOARD_HARDWARE_SERIAL
   selectMotorForUART(MOT_FRONT);
-  delayMicroseconds(10);
+  delayMicroseconds(20);
   Serial.write((uint8_t *)&kart_commandFront, sizeof(kart_commandFront));
-  delayMicroseconds(10 * 10 * 8);  // 8 bytes, 10 µs per bit, 10 bits per byte (Start+Stop)
+  delayMicroseconds(8 * 30 * 10);  // 8 bytes, 30 µs per bit, 10 bits per byte (Start+Stop)
 #endif
 
   // Enable "Active" LED if setpoint != 0
@@ -375,9 +375,9 @@ void kart_sendSetpointRear(int16_t speed) {
 #endif
 #ifdef MAINBOARD_HARDWARE_SERIAL
   selectMotorForUART(MOT_REAR);
-  delayMicroseconds(10);
+  delayMicroseconds(20);
   Serial.write((uint8_t *)&kart_commandRear, sizeof(kart_commandRear));
-  delayMicroseconds(10 * 10 * 8);  // 8 bytes, 10 µs per bit, 10 bits per byte (Start+Stop)
+  delayMicroseconds(8 * 30 * 10);  // 8 bytes, 30 µs per bit, 10 bits per byte (Start+Stop)
 #endif
 
   // Enable "Active" LED if setpoint != 0
@@ -1333,7 +1333,10 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     // Update brake lights if brake state has changed
     if (kart_brakeInput != kart_prevBrakeInput) kart_updateWS2812();
 
-    if (millis() - kart_lastUsartUpdate >= USART_TX_INTERVAL) {
+    uint64_t now = millis();
+    if (now - kart_lastUsartUpdate >= USART_TX_INTERVAL) {
+      kart_lastUsartUpdate = now;
+      
       // Read feedback
       uint8_t feedbackErrorFront = kart_readFeedbackFront();
       kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, feedbackErrorFront);
@@ -1434,6 +1437,5 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       // Send setpoints
       kart_sendSetpointFront(kart_setpointFront);
       kart_sendSetpointRear(kart_setpointRear);
-      kart_lastUsartUpdate = millis();
     }
   }

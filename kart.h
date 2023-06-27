@@ -65,11 +65,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define THROTTLE_RATE_LIMIT 1000  // [bit] Maximum positive throttle change per loop cycle (positive meaning away from 0 in both directions)
 #define ADC_FILTER_SIZE 5         // Number of ADC readings to use for median filter
 
-#define THROTTLE_MAX 1000  // [bit] Maximum throttle value
-#define BRAKE_MAX 1000     // [bit] Maximum brake value
+#define THROTTLE_MAX 1000            // [bit] Maximum throttle value
+#define BRAKE_MAX 1000               // [bit] Maximum brake value
 #define OUTPUT_HARD_LIMIT_MIN -1000  // [bit] Absolute lower limit for throttle/brake output
 #define OUTPUT_HARD_LIMIT_MAX 1000   // [bit] Absolute upper limit for throttle/brake output
 
+#define USART_BAUD 115200
 #define USART_TX_INTERVAL 50    // [ms] Interval for sending USART data
 #define FEEDBACK_RX_TIMEOUT 30  // Motor board feedback receive timeout in milliseconds
 
@@ -89,7 +90,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define WS2812_SEG_3_END 42
 #define WS2812_SEG_4_START 43
 #define WS2812_SEG_4_END 55
-#define WS2812_COLOR_LIGHT 0x400000
+#define WS2812_COLOR_LIGHT 0x200000
 #define WS2812_COLOR_BRAKE 0xFF0000
 #define WS2812_COLOR_INDICATOR 0xFF4000
 #define WS2812_COLOR_REVERSE 0xFFFFFF
