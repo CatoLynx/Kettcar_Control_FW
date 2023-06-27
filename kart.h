@@ -81,14 +81,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #define WS2812_NUM_LEDS 56
 #define WS2812_SEG_0_START 0
-#define WS2812_SEG_0_END 12
-#define WS2812_SEG_1_START 13
+#define WS2812_SEG_0_END 11
+#define WS2812_SEG_1_START 12
 #define WS2812_SEG_1_END 22
 #define WS2812_SEG_2_START 23
 #define WS2812_SEG_2_END 32
 #define WS2812_SEG_3_START 33
-#define WS2812_SEG_3_END 42
-#define WS2812_SEG_4_START 43
+#define WS2812_SEG_3_END 43
+#define WS2812_SEG_4_START 44
 #define WS2812_SEG_4_END 55
 #define WS2812_COLOR_LIGHT 0x200000
 #define WS2812_COLOR_BRAKE 0xFF0000
