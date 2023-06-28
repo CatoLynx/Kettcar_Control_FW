@@ -55,6 +55,8 @@ static kart_state_t kart_state = STATE_SHUTDOWN;
 static kart_headlights_t kart_headlights = HL_OFF;
 static kart_direction_t kart_direction = DIR_FORWARD;
 static kart_turn_indicator_t kart_turnIndicator = TURN_OFF;
+static uint8_t kart_brakeLightState = 0;
+static uint8_t kart_prevBrakeLightState = 0;
 static kart_adc_calibration_values_t kart_adc_calibration_values = { 0, 0, 0, 0 };
 
 static kart_stateMachine_t kart_smAdcCalibration = { AC_START, 0, 0 };
@@ -265,14 +267,14 @@ void kart_updateWS2812() {
       if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
         seg0Color = WS2812_COLOR_INDICATOR;
       }
-    } else if (kart_brakeInput > 0) {
+    } else if (kart_brakeLightState) {
       seg0Color = WS2812_COLOR_BRAKE;
     } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
       seg0Color = WS2812_COLOR_LIGHT;
     }
 
     // Segment 1: Brake > Reverse > Light
-    if (kart_brakeInput > 0) {
+    if (kart_brakeLightState) {
       seg1Color = WS2812_COLOR_BRAKE;
     } else if (kart_direction == DIR_REVERSE) {
       seg1Color = WS2812_COLOR_REVERSE;
@@ -283,14 +285,14 @@ void kart_updateWS2812() {
     // Segment 2: Reverse > Brake > Light
     if (kart_direction == DIR_REVERSE) {
       seg2Color = WS2812_COLOR_REVERSE;
-    } else if (kart_brakeInput > 0) {
+    } else if (kart_brakeLightState) {
       seg2Color = WS2812_COLOR_BRAKE;
     } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
       seg2Color = WS2812_COLOR_LIGHT;
     }
 
     // Segment 3: Brake > Reverse > Light
-    if (kart_brakeInput > 0) {
+    if (kart_brakeLightState) {
       seg3Color = WS2812_COLOR_BRAKE;
     } else if (kart_direction == DIR_REVERSE) {
       seg3Color = WS2812_COLOR_REVERSE;
@@ -303,7 +305,7 @@ void kart_updateWS2812() {
       if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
         seg4Color = WS2812_COLOR_INDICATOR;
       }
-    } else if (kart_brakeInput > 0) {
+    } else if (kart_brakeLightState) {
       seg4Color = WS2812_COLOR_BRAKE;
     } else if (kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
       seg4Color = WS2812_COLOR_LIGHT;
@@ -679,6 +681,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     kart_updateInputs();
     kart_prevThrottleInput = kart_throttleInput;
     kart_prevBrakeInput = kart_brakeInput;
+    kart_prevBrakeLightState = kart_brakeLightState;
     // Limit rising throttle but allow instant falling for safety
     kart_throttleInput = kart_adc_rate_limit(MEDIANFILTER_Insert(&kart_medianFilterThrottle, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minThrottle, kart_adc_calibration_values.maxThrottle, 0, THROTTLE_MAX)), kart_prevThrottleInput, THROTTLE_RATE_LIMIT, 10000);
     kart_brakeInput = MEDIANFILTER_Insert(&kart_medianFilterBrake, kart_prepare_adc_value(analogRead(PIN_ANALOG_BRAKE), kart_adc_calibration_values.minBrake, kart_adc_calibration_values.maxBrake, 0, BRAKE_MAX));
@@ -1331,12 +1334,12 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     }
 
     // Update brake lights if brake state has changed
-    if (kart_brakeInput != kart_prevBrakeInput) kart_updateWS2812();
+    if (kart_brakeLightState != kart_prevBrakeLightState) kart_updateWS2812();
 
     uint64_t now = millis();
     if (now - kart_lastUsartUpdate >= USART_TX_INTERVAL) {
       kart_lastUsartUpdate = now;
-      
+
       // Read feedback
       uint8_t feedbackErrorFront = kart_readFeedbackFront();
       kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, feedbackErrorFront);
@@ -1349,6 +1352,8 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       Serial.print("Brake In:     ");
       Serial.println(kart_brakeInput);
 #endif
+
+      kart_brakeLightState = (kart_brakeInput > 0);
 
       int16_t processedThrottleInputFront = kart_throttleInput;
       int16_t processedBrakeInputFront = kart_brakeInput;
