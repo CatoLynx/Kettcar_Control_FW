@@ -73,6 +73,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define USART_BAUD 115200
 #define USART_TX_INTERVAL 50    // [ms] Interval for sending USART data
 #define FEEDBACK_RX_TIMEOUT 30  // Motor board feedback receive timeout in milliseconds
+#define SPEED_FILTER_SIZE 5     // Number of speed feedback readings to use for median filter
 
 
 #define NUM_INPUTS 16

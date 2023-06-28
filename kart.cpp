@@ -40,12 +40,16 @@ static sMedianFilter_t kart_medianFilterThrottle;
 static sMedianNode_t kart_medianBufferThrottle[ADC_FILTER_SIZE];
 static sMedianFilter_t kart_medianFilterBrake;
 static sMedianNode_t kart_medianBufferBrake[ADC_FILTER_SIZE];
+static sMedianFilter_t kart_medianFilterSpeed;
+static sMedianNode_t kart_medianBufferSpeed[SPEED_FILTER_SIZE];
 static int16_t kart_throttleInput = 0;
 static int16_t kart_brakeInput = 0;
 static int16_t kart_prevThrottleInput = 0;
 static int16_t kart_prevBrakeInput = 0;
 static int16_t kart_setpointFront = 0;
 static int16_t kart_setpointRear = 0;
+static int16_t kart_speedAbs = 0;
+static int16_t kart_prevSpeedAbs = 0;
 static uint64_t kart_lastUsartUpdate = 0;
 
 static uint8_t kart_motorFrontEnabled = 0;
@@ -75,6 +79,10 @@ void kart_init() {
   kart_medianFilterBrake.numNodes = ADC_FILTER_SIZE;
   kart_medianFilterBrake.medianBuffer = kart_medianBufferBrake;
   MEDIANFILTER_Init(&kart_medianFilterBrake);
+
+  kart_medianFilterSpeed.numNodes = SPEED_FILTER_SIZE;
+  kart_medianFilterSpeed.medianBuffer = kart_medianBufferSpeed;
+  MEDIANFILTER_Init(&kart_medianFilterSpeed);
 
   // Load ADC calibration values
   kart_adc_calibration_values.minThrottle = ((uint16_t)EEPROM.read(0x00) << 8) | EEPROM.read(0x01);
@@ -1333,9 +1341,6 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       kart_processTurnIndicatorSwitch();
     }
 
-    // Update brake lights if brake state has changed
-    if (kart_brakeLightState != kart_prevBrakeLightState) kart_updateWS2812();
-
     uint64_t now = millis();
     if (now - kart_lastUsartUpdate >= USART_TX_INTERVAL) {
       kart_lastUsartUpdate = now;
@@ -1353,8 +1358,6 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       Serial.println(kart_brakeInput);
 #endif
 
-      kart_brakeLightState = (kart_brakeInput > 0);
-
       int16_t processedThrottleInputFront = kart_throttleInput;
       int16_t processedBrakeInputFront = kart_brakeInput;
       int16_t throttleOutputFront = 0;
@@ -1371,6 +1374,18 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       // Calculate speedBlend: 0...1 maps to 10...60 rpm
       float speedBlendFront = clamp_float(map_float(speedAvgAbsFront, 10.0f, 60.0f, 0.0f, 1.0f), 0.0f, 1.0f);
       float speedBlendRear = clamp_float(map_float(speedAvgAbsRear, 10.0f, 60.0f, 0.0f, 1.0f), 0.0f, 1.0f);
+
+      // To get the overall abs speed value, use a median filter with the lower of front and back abs speed.
+      // Use the lower of the two because it is more likely that wheels are slipping than blocked.
+      kart_prevSpeedAbs = kart_speedAbs;
+      kart_speedAbs = MEDIANFILTER_Insert(&kart_medianFilterSpeed, ((speedAvgAbsFront < speedAvgAbsRear) ? speedAvgAbsFront : speedAvgAbsRear));
+      int16_t kart_acceleration = kart_speedAbs - kart_prevSpeedAbs;
+
+      // Determine if the brake light should be enabled
+      kart_brakeLightState = (kart_brakeInput > 0) || (kart_acceleration <= -10);
+
+      // Update brake lights if brake light state has changed
+      if (kart_brakeLightState != kart_prevBrakeLightState) kart_updateWS2812();
 
       // At small speeds, fade out throttle if brake is pressed
       if (processedBrakeInputFront > 30) {
