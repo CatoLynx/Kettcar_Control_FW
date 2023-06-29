@@ -61,6 +61,7 @@ static kart_direction_t kart_direction = DIR_FORWARD;
 static kart_turn_indicator_t kart_turnIndicator = TURN_OFF;
 static uint8_t kart_brakeLightState = 0;
 static uint8_t kart_prevBrakeLightState = 0;
+static uint64_t kart_brakeLightDecelTime = 0;
 static kart_adc_calibration_values_t kart_adc_calibration_values = { 0, 0, 0, 0 };
 
 static kart_stateMachine_t kart_smAdcCalibration = { AC_START, 0, 0 };
@@ -1377,12 +1378,25 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
 
       // To get the overall abs speed value, use a median filter with the lower of front and back abs speed.
       // Use the lower of the two because it is more likely that wheels are slipping than blocked.
+      // Formula for speed in km/h: (pi * <wheel diameter in cm>) * 0.0006 km/(rpm*cm*h) * <rotation speed in rpm>
+      // With current tires, this should yield 1 rpm = 0.0672 km/h
       kart_prevSpeedAbs = kart_speedAbs;
       kart_speedAbs = MEDIANFILTER_Insert(&kart_medianFilterSpeed, ((speedAvgAbsFront < speedAvgAbsRear) ? speedAvgAbsFront : speedAvgAbsRear));
       int16_t kart_acceleration = kart_speedAbs - kart_prevSpeedAbs;
 
       // Determine if the brake light should be enabled
-      kart_brakeLightState = (kart_brakeInput > 0) || (kart_acceleration <= -10);
+
+      // Always enable when brake is pressed
+      kart_brakeLightState = (kart_brakeInput > 0);
+
+      // Also enable on sufficient deceleration
+      if (kart_acceleration <= BRAKE_LIGHT_DECEL_THRESHOLD) {
+        kart_brakeLightState = 1;
+        kart_brakeLightDecelTime = now;
+      }
+
+      // Also enable if minimum on time after auto activation has not yet passed
+      if (now - kart_brakeLightDecelTime < BRAKE_LIGHT_DECEL_AFTER_TIME) kart_brakeLightState = 1;
 
       // Update brake lights if brake light state has changed
       if (kart_brakeLightState != kart_prevBrakeLightState) kart_updateWS2812();
