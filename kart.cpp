@@ -51,6 +51,7 @@ static int16_t kart_setpointRear = 0;
 static int16_t kart_speedAbs = 0;
 static int16_t kart_prevSpeedAbs = 0;
 static uint64_t kart_lastUsartUpdate = 0;
+static uint64_t kart_lastActivity = 0;
 
 static uint8_t kart_motorFrontEnabled = 0;
 static uint8_t kart_motorRearEnabled = 0;
@@ -175,6 +176,7 @@ void kart_updateInputs() {
       if (now - kart_inputs[listIndex].internalLastChange > INPUT_DEBOUNCE_TIME_MS) {
         if (bit != kart_inputs[listIndex].state) {
           kart_inputs[listIndex].changed = 1;
+          kart_lastActivity = now;
           kart_inputs[listIndex].prevState = kart_inputs[listIndex].state;
           kart_inputs[listIndex].state = bit;
         }
@@ -687,6 +689,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
   }
 
   void kart_loop() {
+    uint64_t now = millis();
     kart_updateInputs();
     kart_prevThrottleInput = kart_throttleInput;
     kart_prevBrakeInput = kart_brakeInput;
@@ -694,6 +697,8 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     // Limit rising throttle but allow instant falling for safety
     kart_throttleInput = kart_adc_rate_limit(MEDIANFILTER_Insert(&kart_medianFilterThrottle, kart_prepare_adc_value(analogRead(PIN_ANALOG_THROTTLE), kart_adc_calibration_values.minThrottle, kart_adc_calibration_values.maxThrottle, 0, THROTTLE_MAX)), kart_prevThrottleInput, THROTTLE_RATE_LIMIT, 10000);
     kart_brakeInput = MEDIANFILTER_Insert(&kart_medianFilterBrake, kart_prepare_adc_value(analogRead(PIN_ANALOG_BRAKE), kart_adc_calibration_values.minBrake, kart_adc_calibration_values.maxBrake, 0, BRAKE_MAX));
+
+    if (kart_throttleInput > 0 || kart_brakeInput > 0) kart_lastActivity = now;
 
     switch (kart_state) {
       case STATE_SHUTDOWN:
@@ -717,6 +722,13 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
           break;
         }
 
+      case STATE_SHUTDOWN_INACTIVITY:
+        {
+          // Check for ignition off
+          if (!kart_getInput(INPUT_POS_IGNITION)) kart_state = STATE_SHUTDOWN;
+          break;
+        }
+
       case STATE_ADC_CALIBRATION:
         {
           kart_adc_calibration_loop();
@@ -731,8 +743,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
         {
           kart_manual_enable_loop();
           if (kart_smManualEnable.state == ME_END) {
-            kart_state = kart_state = STATE_SHUTDOWN;
-            ;
+            kart_state = STATE_SHUTDOWN;
           }
           break;
         }
@@ -756,14 +767,21 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
             kart_shutdown();
             kart_state = STATE_SHUTTING_DOWN;
           }
+
+          // Check for inactivity timeout
+          if (now - kart_lastActivity > INACTIVITY_TIMEOUT) {
+            kart_shutdown();
+            kart_state = STATE_SHUTTING_DOWN_INACTIVITY;
+          }
           break;
         }
 
       case STATE_SHUTTING_DOWN:
+      case STATE_SHUTTING_DOWN_INACTIVITY:
         {
           kart_shutdown_loop();
           kart_turnIndicator_loop();
-          if (kart_smShutdown.state == SD_END) kart_state = STATE_SHUTDOWN;
+          if (kart_smShutdown.state == SD_END) kart_state = (kart_state == STATE_SHUTTING_DOWN_INACTIVITY ? STATE_SHUTDOWN_INACTIVITY : STATE_SHUTDOWN);
           break;
         }
     }

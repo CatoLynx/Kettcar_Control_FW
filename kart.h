@@ -74,13 +74,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define USART_TX_INTERVAL 50    // [ms] Interval for sending USART data
 #define FEEDBACK_RX_TIMEOUT 30  // Motor board feedback receive timeout in milliseconds
 
-#define SPEED_FILTER_SIZE 5     // Number of speed feedback readings to use for median filter
-#define BRAKE_LIGHT_DECEL_THRESHOLD -5 // Deceleration threshold for brake light activation
-#define BRAKE_LIGHT_DECEL_AFTER_TIME 500 // Additional on time after auto activation of brake light in ms
+#define SPEED_FILTER_SIZE 5               // Number of speed feedback readings to use for median filter
+#define BRAKE_LIGHT_DECEL_THRESHOLD -5    // Deceleration threshold for brake light activation
+#define BRAKE_LIGHT_DECEL_AFTER_TIME 500  // Additional on time after auto activation of brake light in ms
 // Formula for converting acceleration to km/h per second: (pi * <wheel diameter in cm>) * 0.0006 km/(rpm*cm*h) * (<acceleration> rpm / <loop interval> ms)
 // To convert to m/s², divide by 3.6
 // With current tires, this should yield -5 rpm / 50ms = -6.7 km/h/s = -1.86 m/s²
 
+#define INACTIVITY_TIMEOUT (5 * 60 * 1000)  // Duration of inactivity (no button presses or analog inputs > 0) before shutdown in ms
 
 #define NUM_INPUTS 16
 #define NUM_OUTPUTS 24
@@ -154,11 +155,13 @@ typedef struct {
 
 typedef enum {
   STATE_SHUTDOWN,
+  STATE_SHUTDOWN_INACTIVITY,
   STATE_ADC_CALIBRATION,
   STATE_MANUAL_ENABLE,
   STATE_STARTING_UP,
   STATE_OPERATIONAL,
-  STATE_SHUTTING_DOWN
+  STATE_SHUTTING_DOWN,
+  STATE_SHUTTING_DOWN_INACTIVITY,
 } kart_state_t;
 
 typedef enum {
