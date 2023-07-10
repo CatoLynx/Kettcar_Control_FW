@@ -70,6 +70,8 @@ static kart_stateMachine_t kart_smManualEnable = { ME_START, 0, 0 };
 static kart_stateMachine_t kart_smStartup = { ST_START, 0, 0 };
 static kart_stateMachine_t kart_smShutdown = { SD_START, 0, 0 };
 static kart_stateMachine_t kart_smTurnIndicator = { TI_INACTIVE, 0, 0 };
+static uint8_t kart_turnIndicatorNumActiveLEDs = 0;
+static uint64_t kart_turnIndicatorLastAnimationUpdate = 0;
 static kart_stateMachine_t kart_smReverseBeep = { RB_INACTIVE, 0, 0 };
 
 
@@ -271,12 +273,15 @@ void kart_updateWS2812() {
   uint32_t seg2Color = 0;
   uint32_t seg3Color = 0;
   uint32_t seg4Color = 0;
+  uint8_t tiAnimationActiveLeft = 0;
+  uint8_t tiAnimationActiveRight = 0;
 
   if (kart_state == STATE_OPERATIONAL || kart_state == STATE_STARTING_UP) {
     // Segment 0: Indicator > Brake > Light
     if (kart_turnIndicator == TURN_LEFT || kart_turnIndicator == TURN_HAZARD) {
       if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
         seg0Color = WS2812_COLOR_INDICATOR;
+        tiAnimationActiveLeft = 1;
       }
     } else if (kart_brakeLightState) {
       seg0Color = WS2812_COLOR_BRAKE;
@@ -315,6 +320,7 @@ void kart_updateWS2812() {
     if (kart_turnIndicator == TURN_RIGHT || kart_turnIndicator == TURN_HAZARD) {
       if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
         seg4Color = WS2812_COLOR_INDICATOR;
+        tiAnimationActiveRight = 1;
       }
     } else if (kart_brakeLightState) {
       seg4Color = WS2812_COLOR_BRAKE;
@@ -323,7 +329,12 @@ void kart_updateWS2812() {
     }
 
     for (uint8_t i = WS2812_SEG_0_START; i <= WS2812_SEG_0_END; i++) {
-      kart_ws2812.setPixelColor(i, seg0Color);
+      if (tiAnimationActiveLeft) {
+        uint8_t inactiveLEDs = WS2812_SEG_0_END + 1 - kart_turnIndicatorNumActiveLEDs;
+        kart_ws2812.setPixelColor(i, (i < inactiveLEDs) ? 0x000000 : seg0Color);
+      } else {
+        kart_ws2812.setPixelColor(i, seg0Color);
+      }
     }
     for (uint8_t i = WS2812_SEG_1_START; i <= WS2812_SEG_1_END; i++) {
       kart_ws2812.setPixelColor(i, seg1Color);
@@ -335,7 +346,12 @@ void kart_updateWS2812() {
       kart_ws2812.setPixelColor(i, seg3Color);
     }
     for (uint8_t i = WS2812_SEG_4_START; i <= WS2812_SEG_4_END; i++) {
-      kart_ws2812.setPixelColor(i, seg4Color);
+      if (tiAnimationActiveRight) {
+        uint8_t activeLEDs = WS2812_SEG_4_START + kart_turnIndicatorNumActiveLEDs;
+        kart_ws2812.setPixelColor(i, (i < activeLEDs) ? seg4Color : 0x000000);
+      } else {
+        kart_ws2812.setPixelColor(i, seg4Color);
+      }
     }
   }
 
@@ -1204,6 +1220,10 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
                 }
             }
 
+            // Set animation variables
+            kart_turnIndicatorNumActiveLEDs = 1;
+            kart_turnIndicatorLastAnimationUpdate = now;
+
             kart_smTurnIndicator.state = TI_ON_BEEP;
             kart_smTurnIndicator.stepStartTime = now;
             kart_updateWS2812();
@@ -1224,6 +1244,17 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
 
       case TI_ON:
         {
+          // Update LED animation.
+          // As long as WS2812_TURN_INDICATOR_ANIM_INTERVAL is longer than the beep duration,
+          // we only need to check this in state TI_ON
+          if (now - kart_turnIndicatorLastAnimationUpdate >= WS2812_TURN_INDICATOR_ANIM_INTERVAL) {
+            if (kart_turnIndicatorNumActiveLEDs < (WS2812_SEG_0_END - WS2812_SEG_0_START + 1)) {
+              kart_turnIndicatorNumActiveLEDs++;
+              kart_updateWS2812();
+              kart_turnIndicatorLastAnimationUpdate = now;
+            }
+          }
+
           if (stepTimePassed >= 345) {
             // Start beep
             tone(PIN_BUZZER, 1200);

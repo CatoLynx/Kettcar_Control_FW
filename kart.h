@@ -108,6 +108,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define WS2812_COLOR_BRAKE 0xFF0000
 #define WS2812_COLOR_INDICATOR 0xFF4000
 #define WS2812_COLOR_REVERSE 0xFFFFFF
+#define WS2812_TURN_INDICATOR_ANIM_INTERVAL 20 // Turn indicator animation timestep in ms
 
 
 #define INPUT_POS_MOTOR_REAR_ENABLE 11
