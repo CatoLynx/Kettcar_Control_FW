@@ -33,6 +33,8 @@ static kart_serial_command_t kart_commandFront = { 0, 0, 0, 0 };
 static kart_serial_command_t kart_commandRear = { 0, 0, 0, 0 };
 kart_serial_feedback_t kart_feedbackFront = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 kart_serial_feedback_t kart_feedbackRear = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+static uint16_t kart_feedbackErrorCounterFront = 0;
+static uint16_t kart_feedbackErrorCounterRear = 0;
 
 static kart_input_t kart_inputs[NUM_INPUTS] = { { 0, 0, 0, 0, 0, 0 } };
 static kart_output_t kart_outputs[NUM_OUTPUTS] = { { 0 } };
@@ -1449,9 +1451,25 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
 
       // Read feedback
       uint8_t feedbackErrorFront = kart_readFeedbackFront();
-      kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, feedbackErrorFront);
+      if (feedbackErrorFront) {
+        kart_feedbackErrorCounterFront++;
+        if (kart_feedbackErrorCounterFront >= 3) {
+          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, true);
+        }
+      } else {
+        kart_feedbackErrorCounterFront = 0;
+        kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, false);
+      }
       uint8_t feedbackErrorRear = kart_readFeedbackRear();
-      kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, feedbackErrorRear);
+      if (feedbackErrorRear) {
+        kart_feedbackErrorCounterRear++;
+        if (kart_feedbackErrorCounterRear >= 3) {
+          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, true);
+        }
+      } else {
+        kart_feedbackErrorCounterRear = 0;
+        kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, false);
+      }
 
 #ifdef SERIAL_DEBUG
       Serial.print("Throttle In:  ");
