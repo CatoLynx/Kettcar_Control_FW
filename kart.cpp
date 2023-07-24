@@ -59,6 +59,8 @@ static uint8_t kart_motorRearEnabled = 0;
 static kart_state_t kart_state = STATE_SHUTDOWN;
 static kart_headlights_t kart_headlights = HL_OFF;
 static kart_direction_t kart_direction = DIR_FORWARD;
+static kart_control_mode_t kart_controlMode = CTRL_VLT;
+static bool kart_controlModeChanged = false;
 static kart_turn_indicator_t kart_turnIndicator = TURN_OFF;
 static uint8_t kart_brakeLightState = 0;
 static uint8_t kart_prevBrakeLightState = 0;
@@ -413,6 +415,40 @@ void kart_sendSetpointRear(int16_t speed) {
   kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ACTIVE, speed != 0);
 }
 
+void kart_sendControlModeFront(int16_t mode) {
+  kart_commandFront.start = 0xF0CC;
+  kart_commandFront.steer = mode;
+  kart_commandFront.speed = 0;
+  kart_commandFront.checksum = (uint16_t)(kart_commandFront.start ^ kart_commandFront.steer ^ kart_commandFront.speed);
+
+#ifdef MAINBOARD_SOFTWARE_SERIAL
+  kart_swuartFront.write((uint8_t *)&kart_commandFront, sizeof(kart_commandFront));
+#endif
+#ifdef MAINBOARD_HARDWARE_SERIAL
+  selectMotorForUART(MOT_FRONT);
+  delayMicroseconds(20);
+  Serial.write((uint8_t *)&kart_commandFront, sizeof(kart_commandFront));
+  delayMicroseconds(8 * 30 * 10);  // 8 bytes, 30 µs per bit, 10 bits per byte (Start+Stop)
+#endif
+}
+
+void kart_sendControlModeRear(int16_t mode) {
+  kart_commandRear.start = 0xF0CC;
+  kart_commandRear.steer = mode;
+  kart_commandRear.speed = 0;
+  kart_commandRear.checksum = (uint16_t)(kart_commandRear.start ^ kart_commandRear.steer ^ kart_commandRear.speed);
+
+#ifdef MAINBOARD_SOFTWARE_SERIAL
+  kart_swuartRear.write((uint8_t *)&kart_commandRear, sizeof(kart_commandRear));
+#endif
+#ifdef MAINBOARD_HARDWARE_SERIAL
+  selectMotorForUART(MOT_REAR);
+  delayMicroseconds(20);
+  Serial.write((uint8_t *)&kart_commandRear, sizeof(kart_commandRear));
+  delayMicroseconds(8 * 30 * 10);  // 8 bytes, 30 µs per bit, 10 bits per byte (Start+Stop)
+#endif
+}
+
 #ifdef MAINBOARD_SOFTWARE_SERIAL
 uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedbackOut) {
 #endif
@@ -679,6 +715,16 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       kart_stopReverseBeep();
     }
     kart_updateWS2812();
+  }
+
+  void kart_processControlModeSwitch() {
+    if (!kart_getInput(INPUT_POS_CONTROL_MODE)) {
+      if (kart_controlMode != CTRL_TRQ) kart_controlModeChanged = true;
+      kart_controlMode = CTRL_TRQ;
+    } else {
+      if (kart_controlMode != CTRL_VLT) kart_controlModeChanged = true;
+      kart_controlMode = CTRL_VLT;
+    }
   }
 
   void kart_processHornButton() {
@@ -1093,6 +1139,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
             kart_processHeadlightsSwitch();
             kart_processHazardButton();
             kart_processForwardReverseSwitch();
+            kart_processControlModeSwitch();
             kart_processHornButton();
             kart_processTurnIndicatorSwitch();
 
@@ -1381,6 +1428,11 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       kart_processForwardReverseSwitch();
     }
 
+    // Check Control Mode switch
+    if (kart_inputChanged(INPUT_POS_CONTROL_MODE)) {
+      kart_processControlModeSwitch();
+    }
+
     // Check Horn button
     if (kart_inputChanged(INPUT_POS_HORN)) {
       kart_processHornButton();
@@ -1514,6 +1566,13 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       Serial.print("Setpoint Rear:  ");
       Serial.println(kart_setpointRear);
 #endif
+
+      // If control mode needs to be changed and speed is low enough, change control mode
+      if (kart_controlModeChanged == true && kart_speedAbs <= MODE_CHANGE_MAX_SPEED) {
+        kart_sendControlModeFront(kart_controlMode);
+        kart_sendControlModeRear(kart_controlMode);
+        kart_controlModeChanged = false;
+      }
 
       // Send setpoints
       kart_sendSetpointFront(kart_setpointFront);

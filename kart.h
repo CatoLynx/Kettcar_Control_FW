@@ -71,8 +71,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define OUTPUT_HARD_LIMIT_MAX 1000   // [bit] Absolute upper limit for throttle/brake output
 
 #define USART_BAUD 115200
-#define USART_TX_INTERVAL 50    // [ms] Interval for sending USART data
-#define FEEDBACK_RX_TIMEOUT 30  // Motor board feedback receive timeout in milliseconds
+#define USART_TX_INTERVAL 50       // [ms] Interval for sending USART data
+#define FEEDBACK_RX_TIMEOUT 30     // Motor board feedback receive timeout in milliseconds
+#define USART_CONTROL_MODE_VLT 23  // Voltage mode request
+#define USART_CONTROL_MODE_TRQ 42  // Torque mode request
 
 #define SPEED_FILTER_SIZE 5  // Number of speed feedback readings to use for median filter
 
@@ -84,6 +86,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // Formula for speed in km/h: (pi * <wheel diameter in cm>) * 0.0006 km/(rpm*cm*h) * <rotation speed in rpm>
 // With current tires, this should yield 1 rpm = 0.0672 km/h
 #define BRAKE_LIGHT_MIN_SPEED 20  // Minimum speed for automatic brake light activation
+#define MODE_CHANGE_MAX_SPEED 20  // Maximum speed for control mode change
 
 #define BRAKE_LIGHT_DECEL_AFTER_TIME 500  // Additional on time after auto activation of brake light in ms
 
@@ -108,7 +111,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define WS2812_COLOR_BRAKE 0xFF0000
 #define WS2812_COLOR_INDICATOR 0xFF4000
 #define WS2812_COLOR_REVERSE 0xFFFFFF
-#define WS2812_TURN_INDICATOR_ANIM_INTERVAL 20 // Turn indicator animation timestep in ms
+#define WS2812_TURN_INDICATOR_ANIM_INTERVAL 20  // Turn indicator animation timestep in ms
 
 
 #define INPUT_POS_MOTOR_REAR_ENABLE 11
@@ -121,6 +124,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define INPUT_POS_HEADLIGHTS_LOW 15
 #define INPUT_POS_IGNITION 3
 #define INPUT_POS_FORWARD 2
+#define INPUT_POS_CONTROL_MODE 1
 
 #define OUTPUT_POS_IND_MOTOR_FRONT_ACTIVE 0
 #define OUTPUT_POS_IND_MOTOR_FRONT_ERROR 1
@@ -182,6 +186,11 @@ typedef enum {
   DIR_FORWARD,
   DIR_REVERSE
 } kart_direction_t;
+
+typedef enum {
+  CTRL_VLT,
+  CTRL_TRQ
+} kart_control_mode_t;
 
 typedef enum {
   TURN_OFF,
@@ -288,8 +297,10 @@ void kart_turnOffWS2812();
 #ifdef MAINBOARD_HARDWARE_SERIAL
 void selectMotorForUART(uint8_t motor);
 #endif
-void kart_sendSetpointFront(int16_t steer, int16_t speed);
-void kart_sendSetpointRear(int16_t steer, int16_t speed);
+void kart_sendSetpointFront(int16_t speed);
+void kart_sendSetpointRear(int16_t speed);
+void kart_sendControlModeFront(int16_t mode);
+void kart_sendControlModeRear(int16_t mode);
 #ifdef MAINBOARD_SOFTWARE_SERIAL
 uint8_t kart_readFeedback(SoftwareSerial *swuart, kart_serial_feedback_t *feedbackOut);
 #endif
@@ -312,6 +323,7 @@ void kart_processMotorRearEnableSwitch();
 void kart_processHeadlightsSwitch();
 void kart_processHazardButton();
 void kart_processForwardReverseSwitch();
+void kart_processControlModeSwitch();
 void kart_processHornButton();
 void kart_processTurnIndicatorSwitch();
 void kart_loop();
