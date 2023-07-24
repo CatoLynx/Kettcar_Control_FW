@@ -188,8 +188,8 @@ typedef enum {
 } kart_direction_t;
 
 typedef enum {
-  CTRL_VLT,
-  CTRL_TRQ
+  CTRL_VLT = 23,
+  CTRL_TRQ = 42
 } kart_control_mode_t;
 
 typedef enum {
