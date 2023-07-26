@@ -655,8 +655,13 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
   void kart_processHeadlightsSwitch() {
     if (!kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && !kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
       // State: Off (Daytime running lights)
-      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
-      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      if (kart_smTurnIndicator.state == TI_INACTIVE) {
+        kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+        kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      } else {
+        if (kart_turnIndicator != TURN_LEFT && kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+        if (kart_turnIndicator != TURN_RIGHT && kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      }
       kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 0);
       kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 0);
       kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 0);
@@ -665,8 +670,13 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       kart_headlights = HL_DRL;
     } else if (kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && !kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
       // State: Low
-      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
-      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      if (kart_smTurnIndicator.state == TI_INACTIVE) {
+        kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+        kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      } else {
+        if (kart_turnIndicator != TURN_LEFT && kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+        if (kart_turnIndicator != TURN_RIGHT && kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      }
       kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 0);
       kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 1);
       kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 1);
@@ -675,8 +685,13 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       kart_headlights = HL_LOW;
     } else if (kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
       // State: High
-      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
-      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      if (kart_smTurnIndicator.state == TI_INACTIVE) {
+        kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+        kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      } else {
+        if (kart_turnIndicator != TURN_LEFT && kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+        if (kart_turnIndicator != TURN_RIGHT && kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      }
       kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 1);
       kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 1);
       kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 1);
@@ -1223,6 +1238,12 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       case TI_START:
       case TI_OFF:
         {
+          // Turn off DRL when starting
+          if (kart_smTurnIndicator.state == TI_START) {
+            if (kart_turnIndicator == TURN_LEFT || kart_turnIndicator == TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 0);
+            if (kart_turnIndicator == TURN_RIGHT || kart_turnIndicator == TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 0);
+          }
+
           // If TI_START, no delay is needed to ensure that indicators turn on right away
           if (kart_smTurnIndicator.state == TI_START || stepTimePassed >= 345) {
             // Start beep
@@ -1344,6 +1365,13 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
           kart_setOutput(OUTPUT_POS_IND_INDICATOR_RIGHT, 0);
           if (kart_turnIndicator == TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
           kart_updateWS2812();
+
+          // Turn DRL back on
+          if (kart_headlights == HL_DRL || kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
+            kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+            kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+          }
+
           kart_smTurnIndicator.state = TI_INACTIVE;
           kart_smTurnIndicator.stepStartTime = now;
           break;
