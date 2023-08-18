@@ -1147,7 +1147,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
 
       case ST_MAINBOARD_DEADTIME:
         {
-          if (stepTimePassed >= 2000) {
+          if (stepTimePassed >= 0) {
             // Wait after enabling mainboards
 
             // Process all switches/buttons once to establish initial state
