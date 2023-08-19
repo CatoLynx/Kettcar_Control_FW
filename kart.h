@@ -81,12 +81,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // Formula for converting acceleration to km/h per second: (pi * <wheel diameter in cm>) * 0.0006 km/(rpm*cm*h) * (<acceleration> rpm / <loop interval> ms)
 // To convert to m/s², divide by 3.6
 // With current tires, this should yield -5 rpm / 50ms = -6.7 km/h/s = -1.86 m/s²
-#define BRAKE_LIGHT_DECEL_THRESHOLD -5  // Deceleration threshold for brake light activation
+#define BRAKE_LIGHT_DECEL_THRESHOLD -8  // Deceleration threshold for brake light activation
 
 // Formula for speed in km/h: (pi * <wheel diameter in cm>) * 0.0006 km/(rpm*cm*h) * <rotation speed in rpm>
 // With current tires, this should yield 1 rpm = 0.0672 km/h
-#define BRAKE_LIGHT_MIN_SPEED 20  // Minimum speed for automatic brake light activation
-#define MODE_CHANGE_MAX_SPEED 20  // Maximum speed for control mode change
+#define BRAKE_LIGHT_MIN_SPEED 60  // Minimum speed for automatic brake light activation
+#define MODE_CHANGE_MAX_SPEED 40  // Maximum speed for control mode change
 
 #define BRAKE_LIGHT_DECEL_AFTER_TIME 500  // Additional on time after auto activation of brake light in ms
 
