@@ -656,6 +656,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
   void kart_processHeadlightsSwitch() {
     if (!kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && !kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
       // State: Off (Daytime running lights)
+      // L+R "low" on if turn indicator is off, L+R "high" off, instrument lights off
       if (kart_smTurnIndicator.state == TI_INACTIVE) {
         kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
         kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
@@ -671,6 +672,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       kart_headlights = HL_DRL;
     } else if (kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && !kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
       // State: Low
+      // L+R "low" on if turn indicator is off, L "high" off, R "high" on, instrument lights on
       if (kart_smTurnIndicator.state == TI_INACTIVE) {
         kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
         kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
@@ -686,6 +688,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       kart_headlights = HL_LOW;
     } else if (kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
       // State: High
+      // L+R "low" on if turn indicator is off, L+R "high" on, instrument lights on
       if (kart_smTurnIndicator.state == TI_INACTIVE) {
         kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
         kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
@@ -699,6 +702,22 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       kart_setOutput(OUTPUT_POS_IND_HORN, 1);
       if (kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 1);
       kart_headlights = HL_HIGH;
+    } else if (!kart_getInput(INPUT_POS_HEADLIGHTS_LOW) && kart_getInput(INPUT_POS_HEADLIGHTS_HIGH)) {
+      // State: High flash
+      // L+R "low" on if turn indicator is off, L "high" on, R "high" off, instrument lights off
+      if (kart_smTurnIndicator.state == TI_INACTIVE) {
+        kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+        kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      } else {
+        if (kart_turnIndicator != TURN_LEFT && kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
+        if (kart_turnIndicator != TURN_RIGHT && kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
+      }
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_HIGH, 1);
+      kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_HIGH, 0);
+      kart_setOutput(OUTPUT_POS_IND_HEADLIGHTS, 0);
+      kart_setOutput(OUTPUT_POS_IND_HORN, 0);
+      if (kart_turnIndicator != TURN_HAZARD) kart_setOutput(OUTPUT_POS_IND_INDICATOR_HAZARD, 0);
+      kart_headlights = HL_HIGH_FLASH;
     }
     kart_updateWS2812();
   }
@@ -1381,7 +1400,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
           kart_updateWS2812();
 
           // Turn DRL back on
-          if (kart_headlights == HL_DRL || kart_headlights == HL_LOW || kart_headlights == HL_HIGH) {
+          if (kart_headlights != HL_OFF) {
             kart_setOutput(OUTPUT_POS_HEADLIGHT_LEFT_LOW, 1);
             kart_setOutput(OUTPUT_POS_HEADLIGHT_RIGHT_LOW, 1);
           }

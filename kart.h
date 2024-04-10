@@ -179,7 +179,8 @@ typedef enum {
   HL_OFF,
   HL_DRL,
   HL_LOW,
-  HL_HIGH
+  HL_HIGH,
+  HL_HIGH_FLASH
 } kart_headlights_t;
 
 typedef enum {
