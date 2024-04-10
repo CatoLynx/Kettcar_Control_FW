@@ -326,6 +326,7 @@ void kart_processForwardReverseSwitch();
 void kart_processControlModeSwitch();
 void kart_processHornButton();
 void kart_processTurnIndicatorSwitch();
+void kart_processIgnitionButton();
 void kart_loop();
 void kart_adc_calibration_loop();
 void kart_manual_enable_loop();

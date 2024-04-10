@@ -64,6 +64,7 @@ static kart_direction_t kart_direction = DIR_FORWARD;
 static kart_control_mode_t kart_controlMode = CTRL_VLT;
 static bool kart_controlModeChanged = false;
 static kart_turn_indicator_t kart_turnIndicator = TURN_OFF;
+static bool kart_ignitionOn = false;
 static uint8_t kart_brakeLightState = 0;
 static uint8_t kart_prevBrakeLightState = 0;
 static uint64_t kart_brakeLightDecelTime = 0;
@@ -767,9 +768,22 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     }
   }
 
+  void kart_processIgnitionButton() {
+    if (kart_getInput(INPUT_POS_IGNITION)) {
+      if (kart_ignitionOn == true) {
+        // If ignition is on, shut off
+        kart_ignitionOn = false;
+      } else {
+        // Else, start up
+        kart_ignitionOn = true;
+      }
+    }
+  }
+
   void kart_loop() {
     uint64_t now = millis();
     kart_updateInputs();
+    if (kart_inputChanged(INPUT_POS_IGNITION)) kart_processIgnitionButton();
     kart_prevThrottleInput = kart_throttleInput;
     kart_prevBrakeInput = kart_brakeInput;
     kart_prevBrakeLightState = kart_brakeLightState;
@@ -783,7 +797,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       case STATE_SHUTDOWN:
         {
           // Check for ignition on
-          if (kart_getInput(INPUT_POS_IGNITION)) {
+          if (kart_ignitionOn == true) {
             if (!kart_getInput(INPUT_POS_FORWARD) && kart_getInput(INPUT_POS_INDICATOR_RIGHT) && kart_getInput(INPUT_POS_INDICATOR_HAZARD) && kart_getInput(INPUT_POS_HORN)) {
               // If Reverse, Indicator Right, Hazard and Horn buttons/switches are pressed during startup, enter manual board enable mode
               // This can be used when reprogramming the mainboards
@@ -804,7 +818,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
       case STATE_SHUTDOWN_INACTIVITY:
         {
           // Check for ignition off
-          if (!kart_getInput(INPUT_POS_IGNITION)) kart_state = STATE_SHUTDOWN;
+          if (kart_ignitionOn == false) kart_state = STATE_SHUTDOWN;
           break;
         }
 
@@ -842,7 +856,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
           kart_operation_loop();
 
           // Check for ignition off
-          if (!kart_getInput(INPUT_POS_IGNITION)) {
+          if (kart_ignitionOn == false) {
             kart_shutdown();
             kart_state = STATE_SHUTTING_DOWN;
           }
@@ -1013,7 +1027,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
           kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, kart_getInput(INPUT_POS_HORN));
 
           // Leave mode when ignition is turned off
-          if (!kart_getInput(INPUT_POS_IGNITION)) {
+          if (kart_ignitionOn == false) {
             // Beep: Manual enable end
             tone(PIN_BUZZER, 4000);
             kart_smManualEnable.state = ME_BEEP_END;
