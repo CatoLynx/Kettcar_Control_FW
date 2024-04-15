@@ -803,6 +803,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     uint64_t now = millis();
     kart_updateInputs();
     if (kart_inputChanged(INPUT_POS_IGNITION)) kart_processIgnitionButton();
+    kart_setOutput(OUTPUT_POS_IND_IGNITION, kart_ignitionOn);
     kart_prevThrottleInput = kart_throttleInput;
     kart_prevBrakeInput = kart_brakeInput;
     kart_prevBrakeLightState = kart_brakeLightState;
