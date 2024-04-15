@@ -1,0 +1,2 @@
+Manual Board Enable: Rev + IndR + Haz + Horn
+ADC Calibration: Haz + Horn
