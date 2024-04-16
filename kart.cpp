@@ -375,6 +375,7 @@ void selectMotorForUART(uint8_t motor) {
   } else if (motor == MOT_REAR) {
     digitalWrite(PIN_UART_SEL, LOW);
   }
+  delayMicroseconds(UART_HW_SWITCH_POST_DELAY_US);
 }
 #endif
 
@@ -389,9 +390,8 @@ void kart_sendSetpointFront(int16_t speed) {
 #endif
 #ifdef MAINBOARD_HARDWARE_SERIAL
   selectMotorForUART(MOT_FRONT);
-  delayMicroseconds(20);
   Serial.write((uint8_t *)&kart_commandFront, sizeof(kart_commandFront));
-  delayMicroseconds(8 * 30 * 10);  // 8 bytes, 30 µs per bit, 10 bits per byte (Start+Stop)
+  delayMicroseconds(8 * UART_HW_SWITCH_BYTE_DELAY_US);  // 8 bytes, µs per byte
 #endif
 
   // Enable "Active" LED if setpoint != 0
@@ -409,9 +409,8 @@ void kart_sendSetpointRear(int16_t speed) {
 #endif
 #ifdef MAINBOARD_HARDWARE_SERIAL
   selectMotorForUART(MOT_REAR);
-  delayMicroseconds(20);
   Serial.write((uint8_t *)&kart_commandRear, sizeof(kart_commandRear));
-  delayMicroseconds(8 * 30 * 10);  // 8 bytes, 30 µs per bit, 10 bits per byte (Start+Stop)
+  delayMicroseconds(8 * UART_HW_SWITCH_BYTE_DELAY_US);  // 8 bytes, µs per byte
 #endif
 
   // Enable "Active" LED if setpoint != 0
@@ -429,9 +428,8 @@ void kart_sendControlModeFront(int16_t mode) {
 #endif
 #ifdef MAINBOARD_HARDWARE_SERIAL
   selectMotorForUART(MOT_FRONT);
-  delayMicroseconds(20);
   Serial.write((uint8_t *)&kart_commandFront, sizeof(kart_commandFront));
-  delayMicroseconds(8 * 30 * 10);  // 8 bytes, 30 µs per bit, 10 bits per byte (Start+Stop)
+  delayMicroseconds(8 * UART_HW_SWITCH_BYTE_DELAY_US);  // 8 bytes, µs per byte
 #endif
 }
 
@@ -446,9 +444,8 @@ void kart_sendControlModeRear(int16_t mode) {
 #endif
 #ifdef MAINBOARD_HARDWARE_SERIAL
   selectMotorForUART(MOT_REAR);
-  delayMicroseconds(20);
   Serial.write((uint8_t *)&kart_commandRear, sizeof(kart_commandRear));
-  delayMicroseconds(8 * 30 * 10);  // 8 bytes, 30 µs per bit, 10 bits per byte (Start+Stop)
+  delayMicroseconds(8 * UART_HW_SWITCH_BYTE_DELAY_US);  // 8 bytes, µs per byte
 #endif
 }
 

@@ -35,6 +35,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <SoftwareSerial.h>
 #endif
 
+#ifdef MAINBOARD_HARDWARE_SERIAL
+#define UART_HW_SWITCH_BYTE_DELAY_US 300 // Delay in µs per transmitted byte (incl. start + stop bits)
+#define UART_HW_SWITCH_POST_DELAY_US UART_HW_SWITCH_BYTE_DELAY_US // Delay in µs after switching the analog switch
+#endif
+
 
 #define PIN_HORN 2
 #define PIN_BUZZER 7
