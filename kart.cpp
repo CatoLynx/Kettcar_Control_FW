@@ -1508,28 +1508,6 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     if (now - kart_lastUsartUpdate >= USART_TX_INTERVAL) {
       kart_lastUsartUpdate = now;
 
-      // Read feedback
-      uint8_t feedbackErrorFront = kart_readFeedbackFront();
-      if (feedbackErrorFront) {
-        kart_feedbackErrorCounterFront++;
-        if (kart_feedbackErrorCounterFront >= 3) {
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, true);
-        }
-      } else {
-        kart_feedbackErrorCounterFront = 0;
-        kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, false);
-      }
-      uint8_t feedbackErrorRear = kart_readFeedbackRear();
-      if (feedbackErrorRear) {
-        kart_feedbackErrorCounterRear++;
-        if (kart_feedbackErrorCounterRear >= 3) {
-          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, true);
-        }
-      } else {
-        kart_feedbackErrorCounterRear = 0;
-        kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, false);
-      }
-
 #ifdef SERIAL_DEBUG
       Serial.print("Throttle In:  ");
       Serial.println(kart_throttleInput);
@@ -1651,8 +1629,56 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
         kart_controlModeChanged = false;
       }
 
-      // Send setpoints
+      /*
+         Feedback is read AFTER sending the setpoints. This is obviously suboptimal since it means that the setpoints
+         Get calculated based on outdated feedback. However, this solves one particular issue:
+         If the feedback is read from both boards before sending the setpoints to both boards,
+         since the reading process flushes the input buffer and waits for a new frame, it effectively synchronizes
+         the main loop to the feedback. Now, if you read front first and rear afterwards, the loop is synced to rear.
+         This means that the setpoints get sent with a very reproducible timing in relation to the rear feedback.
+         This leads to a "beat frequency" effect with the feedback of the front board, which will always be just slightly off
+         compared to the rear board. Thus, the front commands have no defined relation to the front feedback.
+         This shouldn't matter, but it does. For some unknown reason, when the command overlays the end of the feedback,
+         even though they are on separate wires, this causes the motor controller to not receive the data correctly.
+         Since the commands are synced to the feedback, this will occur for many subsequent loop cycles, accumulating
+         until the serial timeout period is reached and a timeout error occurs.
+         Now, if we read the front feedback, then send the front setpoint, then do the same for rear, both commands
+         are synced to their respective feedback and no beat effect can occur, thus preventing this
+         serial timeout situation from arising.
+         This necessitates reading at least one of the feedbacks after sending a new setpoint, and since both setpoints
+         must always be identical, this means that the setpoints need to be calculated with at least one of two feedbacks
+         being stale. This should be acceptable in practice, since the 50ms Tx interval is still pretty quick compared to
+         the possible speed change of the kart. (if the speed changes significantly within 50ms, you have other problems)
+      */
+
+      // Read front feedback
+      uint8_t feedbackErrorFront = kart_readFeedbackFront();
+      if (feedbackErrorFront) {
+        kart_feedbackErrorCounterFront++;
+        if (kart_feedbackErrorCounterFront >= 3) {
+          kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, true);
+        }
+      } else {
+        kart_feedbackErrorCounterFront = 0;
+        kart_setOutput(OUTPUT_POS_IND_MOTOR_FRONT_ERROR, false);
+      }
+
+      // Send front setpoint
       kart_sendSetpointFront(kart_setpointFront);
+
+      // Read rear feedback
+      uint8_t feedbackErrorRear = kart_readFeedbackRear();
+      if (feedbackErrorRear) {
+        kart_feedbackErrorCounterRear++;
+        if (kart_feedbackErrorCounterRear >= 3) {
+          kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, true);
+        }
+      } else {
+        kart_feedbackErrorCounterRear = 0;
+        kart_setOutput(OUTPUT_POS_IND_MOTOR_REAR_ERROR, false);
+      }
+
+      // Send rear setpoint
       kart_sendSetpointRear(kart_setpointRear);
     }
   }
