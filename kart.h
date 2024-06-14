@@ -236,6 +236,7 @@ enum kart_startup_substate {
 
 enum kart_shutdown_substate {
   SD_START,
+  SD_BUZZER_OFF,
   SD_MAINBOARD_DISABLE,
   SD_MAINBOARD_DEADTIME,
   SD_END

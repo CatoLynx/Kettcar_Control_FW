@@ -1100,7 +1100,7 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
 
       case ST_ALL_ON:
         {
-          if (stepTimePassed >= 250) {
+          if (stepTimePassed >= 50) {
             // Turn off buzzer
             noTone(PIN_BUZZER);
             kart_smStartup.state = ST_BUZZER_OFF;
@@ -1210,6 +1210,9 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
           // Turn off horn
           kart_setHorn(0);
 
+          // Turn on buzzer
+          tone(PIN_BUZZER, 750);
+
           // Disable mainboards
           kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 1);
           kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 1);
@@ -1220,7 +1223,18 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
 
       case SD_MAINBOARD_DISABLE:
         {
-          if (stepTimePassed >= 500) {
+          if (stepTimePassed >= 50) {
+            // Turn off buzzer
+            noTone(PIN_BUZZER);
+            kart_smShutdown.state = SD_BUZZER_OFF;
+            kart_smShutdown.stepStartTime = now;
+          }
+          break;
+        }
+
+      case SD_BUZZER_OFF:
+        {
+          if (stepTimePassed >= 450) {
             // Stop disabling mainboards
             kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_FRONT, 0);
             kart_setOutput(OUTPUT_POS_MOTOR_CONTROLLER_ENABLE_REAR, 0);
