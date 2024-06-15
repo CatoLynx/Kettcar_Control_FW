@@ -206,6 +206,12 @@ typedef enum {
   TURN_HAZARD
 } kart_turn_indicator_t;
 
+typedef enum {
+  ANIM_NONE,
+  ANIM_FLASH_ORANGE,
+  ANIM_FLASH_BLUE
+} kart_led_animation_t;
+
 enum kart_adc_cal_substate {
   AC_START,
   AC_BEEP_START,

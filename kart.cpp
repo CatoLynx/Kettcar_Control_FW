@@ -1,18 +1,18 @@
 /*
-Copyright 2023-2024 Julian Metzler
+  Copyright 2023-2024 Julian Metzler
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
 
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "kart.h"
@@ -69,6 +69,8 @@ static uint8_t kart_brakeLightState = 0;
 static uint8_t kart_prevBrakeLightState = 0;
 static uint64_t kart_brakeLightDecelTime = 0;
 static kart_adc_calibration_values_t kart_adc_calibration_values = { 0, 0, 0, 0 };
+static kart_led_animation_t kart_ledAnimation = ANIM_NONE;
+static uint32_t kart_ledAnimationStart = 0;
 
 static kart_stateMachine_t kart_smAdcCalibration = { AC_START, 0, 0 };
 static kart_stateMachine_t kart_smManualEnable = { ME_START, 0, 0 };
@@ -271,6 +273,22 @@ int16_t kart_adc_rate_limit(int16_t inVal, int16_t prevVal, int16_t maxRateInc, 
   return inVal;
 }
 
+uint32_t kart_getLedAnimationColor(uint8_t segNum) {
+  uint32_t now = millis();
+  uint32_t timeDiff = now - kart_ledAnimationStart;
+  switch (kart_ledAnimation) {
+    case ANIM_FLASH_ORANGE:
+    case ANIM_FLASH_BLUE: {
+        uint32_t cycleTime = timeDiff % 480;
+        uint8_t subCycleTime = cycleTime % 60;
+        if (cycleTime >= 280) return 0x000000;
+        if (subCycleTime >=  0 && subCycleTime < 30) return (kart_ledAnimation == ANIM_FLASH_ORANGE ? WS2812_COLOR_INDICATOR : 0x0000FF);
+        if (subCycleTime >= 30 && subCycleTime < 60) return 0x000000;
+        break;
+      }
+  }
+}
+
 void kart_updateWS2812() {
   kart_ws2812.clear();
   uint32_t seg0Color = 0;
@@ -282,8 +300,10 @@ void kart_updateWS2812() {
   uint8_t tiAnimationActiveRight = 0;
 
   if (kart_state == STATE_OPERATIONAL || kart_state == STATE_STARTING_UP) {
-    // Segment 0: Indicator > Brake > Light
-    if (kart_turnIndicator == TURN_LEFT || kart_turnIndicator == TURN_HAZARD) {
+    // Segment 0: Animation > Indicator > Brake > Light
+    if (kart_ledAnimation != ANIM_NONE) {
+      seg0Color = kart_getLedAnimationColor(0);
+    } else if (kart_turnIndicator == TURN_LEFT || kart_turnIndicator == TURN_HAZARD) {
       if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
         seg0Color = WS2812_COLOR_INDICATOR;
         tiAnimationActiveLeft = 1;
@@ -294,8 +314,10 @@ void kart_updateWS2812() {
       seg0Color = WS2812_COLOR_LIGHT;
     }
 
-    // Segment 1: Brake > Reverse > Light
-    if (kart_brakeLightState) {
+    // Segment 1: Animation > Brake > Reverse > Light
+    if (kart_ledAnimation != ANIM_NONE) {
+      seg1Color = kart_getLedAnimationColor(1);
+    } else if (kart_brakeLightState) {
       seg1Color = WS2812_COLOR_BRAKE;
     } else if (kart_direction == DIR_REVERSE) {
       seg1Color = WS2812_COLOR_REVERSE;
@@ -303,8 +325,10 @@ void kart_updateWS2812() {
       seg1Color = WS2812_COLOR_LIGHT;
     }
 
-    // Segment 2: Reverse > Brake > Light
-    if (kart_direction == DIR_REVERSE) {
+    // Segment 2: Animation > Reverse > Brake > Light
+    if (kart_ledAnimation != ANIM_NONE) {
+      seg2Color = kart_getLedAnimationColor(2);
+    } else if (kart_direction == DIR_REVERSE) {
       seg2Color = WS2812_COLOR_REVERSE;
     } else if (kart_brakeLightState) {
       seg2Color = WS2812_COLOR_BRAKE;
@@ -312,8 +336,10 @@ void kart_updateWS2812() {
       seg2Color = WS2812_COLOR_LIGHT;
     }
 
-    // Segment 3: Brake > Reverse > Light
-    if (kart_brakeLightState) {
+    // Segment 3: Animation > Brake > Reverse > Light
+    if (kart_ledAnimation != ANIM_NONE) {
+      seg3Color = kart_getLedAnimationColor(3);
+    } else if (kart_brakeLightState) {
       seg3Color = WS2812_COLOR_BRAKE;
     } else if (kart_direction == DIR_REVERSE) {
       seg3Color = WS2812_COLOR_REVERSE;
@@ -321,8 +347,10 @@ void kart_updateWS2812() {
       seg3Color = WS2812_COLOR_LIGHT;
     }
 
-    // Segment 4: Indicator > Brake > Light
-    if (kart_turnIndicator == TURN_RIGHT || kart_turnIndicator == TURN_HAZARD) {
+    // Segment 4: Animation > Indicator > Brake > Light
+    if (kart_ledAnimation != ANIM_NONE) {
+      seg4Color = kart_getLedAnimationColor(4);
+    } else if (kart_turnIndicator == TURN_RIGHT || kart_turnIndicator == TURN_HAZARD) {
       if (kart_smTurnIndicator.state == TI_ON_BEEP || kart_smTurnIndicator.state == TI_ON) {
         seg4Color = WS2812_COLOR_INDICATOR;
         tiAnimationActiveRight = 1;
@@ -721,7 +749,17 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
 
   void kart_processHazardButton() {
     if (kart_getInput(INPUT_POS_INDICATOR_HAZARD)) {
-      if (kart_turnIndicator == TURN_HAZARD) {
+      if (kart_ledAnimation != ANIM_NONE) {
+        // If an animation is active, disable it
+        kart_ledAnimation = ANIM_NONE;
+        kart_ledAnimationStart = 0;
+
+        // Revert to state determined by indicator switch
+        kart_processTurnIndicatorSwitch();
+
+        // Illuminate button again if necessary
+        kart_processHeadlightsSwitch();
+      } else if (kart_turnIndicator == TURN_HAZARD) {
         // If hazards are on, temporarily set to OFF
         // to enable kart_processTurnIndicatorSwitch() to execute
         kart_stopTurnIndicator();
@@ -733,9 +771,25 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
         // Illuminate button again if necessary
         kart_processHeadlightsSwitch();
       } else {
-        // Else, enable hazards
-        kart_turnIndicator = TURN_HAZARD;
-        kart_startTurnIndicator();
+        if (kart_turnIndicator == TURN_LEFT) {
+          // If hazard button is pressed while turn indicator is set to left,
+          // enable orange flashing animation
+          kart_stopTurnIndicator();
+          kart_turnIndicator = TURN_OFF;
+          kart_ledAnimation = ANIM_FLASH_ORANGE;
+          kart_ledAnimationStart = millis();
+        } else if (kart_turnIndicator == TURN_RIGHT) {
+          // If hazard button is pressed while turn indicator is set to right,
+          // enable blue flashing animation
+          kart_stopTurnIndicator();
+          kart_turnIndicator = TURN_OFF;
+          kart_ledAnimation = ANIM_FLASH_BLUE;
+          kart_ledAnimationStart = millis();
+        } else {
+          // Else, enable hazards
+          kart_turnIndicator = TURN_HAZARD;
+          kart_startTurnIndicator();
+        }
       }
     }
   }
@@ -766,6 +820,9 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
   }
 
   void kart_processTurnIndicatorSwitch() {
+    // Ignore switch if animation is active
+    if (kart_ledAnimation != ANIM_NONE) return;
+
     // Ignore switch if hazards are on
     if (kart_turnIndicator == TURN_HAZARD) return;
 
@@ -1516,6 +1573,11 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
     // Check Turn Indicator switch
     if (kart_inputChanged(INPUT_POS_INDICATOR_LEFT) || kart_inputChanged(INPUT_POS_INDICATOR_RIGHT)) {
       kart_processTurnIndicatorSwitch();
+    }
+
+    // If an animation is active, keep updating the LEDs
+    if (kart_ledAnimation != ANIM_NONE) {
+      kart_updateWS2812();
     }
 
     uint64_t now = millis();
