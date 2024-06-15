@@ -1,5 +1,5 @@
 /*
-Copyright 2023 Julian Metzler
+Copyright 2023-2024 Julian Metzler
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
