@@ -281,7 +281,8 @@ uint32_t kart_getLedAnimationColor(uint8_t segNum) {
     case ANIM_FLASH_BLUE: {
         uint32_t cycleTime = timeDiff % 480;
         uint8_t subCycleTime = cycleTime % 60;
-        if (cycleTime >= 280) return 0x000000;
+        if (cycleTime >= 350) return 0x000000;
+        if (cycleTime >= 280) return (kart_ledAnimation == ANIM_FLASH_ORANGE ? WS2812_COLOR_INDICATOR : 0x0000FF);
         if (subCycleTime >=  0 && subCycleTime < 30) return (kart_ledAnimation == ANIM_FLASH_ORANGE ? WS2812_COLOR_INDICATOR : 0x0000FF);
         if (subCycleTime >= 30 && subCycleTime < 60) return 0x000000;
         break;
@@ -1266,6 +1267,9 @@ uint8_t kart_readFeedback(SoftwareSerial *uart, kart_serial_feedback_t *feedback
         {
           // Turn off horn
           kart_setHorn(0);
+
+          // If an animation is active, disable it
+          kart_ledAnimation = ANIM_NONE;
 
           // Turn on buzzer
           tone(PIN_BUZZER, 750);
